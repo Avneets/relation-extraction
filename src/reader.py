@@ -1,6 +1,7 @@
 import config
 import logging
-
+from structure import RelationTripleSet
+import numpy as np
 
 class Reader(object):
 
@@ -9,12 +10,12 @@ class Reader(object):
 
     @staticmethod
     def read_data(filepath, entity_dict=None, relation_dict=None, has_count=False):
-        try:
+        if True:
             if entity_dict is None:
                 entity_dict = dict()
             if relation_dict is None:
                 relation_dict = dict()
-            relation_tuples = list()
+            relation_triples_counter = dict()
             with open(filepath, 'r') as f:
                 entity_index = 0
                 relation_index = 0
@@ -31,26 +32,32 @@ class Reader(object):
                             entity_dict[items[2]] = entity_index
                             entity_index += 1
 
-                        if has_count:
-                            assert len(items) == 4
-                            relation_tuples.append((entity_dict[items[0]], relation_dict[items[1]], entity_dict[items[2]],
-                                                int(items[3])))
-                        else:
-                            relation_tuples.append((entity_dict[items[0]], relation_dict[items[1]], entity_dict[items[2]]))
+                        relation_triple = (entity_dict[items[0]], relation_dict[items[1]], entity_dict[items[2]])
+                        if relation_triple not in relation_triples_counter:
+                            if has_count:
+                                relation_triples_counter[relation_triple] = int(items[3])
+                            else:
+                                relation_triples_counter[relation_triple] = 1
                     else:
                         logging.debug("Some issue in - %s" % line)
-
-
-            return entity_dict, relation_dict, relation_tuples
-
-        except:
-            logging.ERROR("Unexpected Error!")
-            return None
+            return RelationTripleSet(entity_dict, relation_dict, relation_triples_counter, has_count)
+        # except:
+        #     logging.error("Unexpected Error!")
+        #     return None
 
 if __name__ == "__main__":
-    logging.info("Reading data from KB")
-    E, R, T = Reader.read_data(config.KBTrainFile)
-    logging.info("\nNumber of Entitites = %d\nNumber of KB Relations = %d\nNumber of Tuples = %d\n" % (len(E), len(R), len(T)))
     logging.info("Reading data from text relations")
-    E, R, T = Reader.read_data(config.textRelationsFile)
-    logging.info("\nNumber of Entitites = %d\nNumber of KB Relations = %d\nNumber of Tuples = %d" % (len(E), len(R), len(T)))
+    T = Reader.read_data(config.textRelationsFile, has_count=True)
+    logging.info("\nNumber of Entitites = %d\nNumber of KB Relations = %d\nNumber of Tuples = %d" %
+                 (len(T.entity_index), len(T.relation_index), len(T.relation_triples_counter)))
+    logging.info("Reading data from KB")
+    T = Reader.read_data(config.KBTrainFile)
+    logging.info("\nNumber of Entitites = %d\nNumber of KB Relations = %d\nNumber of Tuples = %d" %
+                 (len(T.entity_index), len(T.relation_index), len(T.relation_triples_counter)))
+    logging.info("Testing negative sampling")
+    index = np.random.randint(0, len(T.relation_triples_counter))
+    s, r, o = T.relation_triples[index]
+    logging.info("Negative sampling for (in object position) triple - (%s, %s, %s)" %
+                 (T.reverse_entity_index[s], T.reverse_relation_index[r], T.reverse_entity_index[o]))
+    negative_samples = T.sample_negative_instances((s, r, o), 10, False)
+    logging.info("%s" % str([T.reverse_entity_index[e] for e in negative_samples]))
