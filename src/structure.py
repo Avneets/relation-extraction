@@ -27,6 +27,10 @@ class RelationTripleSet(object):
         self.reverse_entity_index = {value: key for key, value in self.entity_index.items()}
         self.reverse_relation_index = {value: key for key, value in self.relation_index.items()}
 
+        self.n_entities = len(self.entity_index)
+        self.n_relations = len(self.relation_index)
+        self.n_relation_triples = len(self.relation_triples)
+
         self.batch_index = 0
 
     def sample_negative_instances(self, relation_triple, num_samples, for_subject):
@@ -52,6 +56,11 @@ class RelationTripleSet(object):
             negative_instances.add(entity)
         return list(negative_instances)
 
+    def print_set_statistics(self):
+        print("Number of entities = %d" % self.n_entities)
+        print("Number of relations = %d" % self.n_relations)
+        print("Number of relation triples = %d" % self.n_relation_triples)
+
     def construct_triple_string(self, relation_triple):
         """
         Helper function
@@ -63,16 +72,26 @@ class RelationTripleSet(object):
         return self.reverse_entity_index[sub] + '\t' + self.reverse_relation_index[rel] + \
                '\t' + self.reverse_entity_index[obj]
 
-    def generate_batch(self, batch_size=config.batchSize, num_neg_samples=config.numNegSamples):
+    def generate_batch(self, batch_size=config.batchSize, num_neg_samples=config.numNegSamples, full_data=False, no_neg=False):
         # Currently giving out contiguous batches. Is random sampling of batch needed? Probably not
 
+        if full_data: batch_size = self.n_relation_triples
         triples = np.zeros((batch_size, 3)).astype(theano.config.floatX)
         sub_neg_samples = np.zeros((batch_size, num_neg_samples)).astype(theano.config.floatX)
         obj_neg_samples = np.zeros((batch_size, num_neg_samples)).astype(theano.config.floatX)
-        for i in xrange(batch_size):
-            i_range = (i + self.batch_index) % len(self.relation_triples_counter)
-            triples[i] = np.asarray(list(self.relation_triples[i_range]), dtype=theano.config.floatX)
-            sub_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, True)
-            obj_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, False)
+        if not no_neg:
+            for i in xrange(batch_size):
+                i_range = (i + self.batch_index) % self.n_relation_triples
+                triples[i] = np.asarray(list(self.relation_triples[i_range]), dtype=theano.config.floatX)
+                sub_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, True)
+                obj_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, False)
 
-        return triples, sub_neg_samples, obj_neg_samples
+            return (triples, sub_neg_samples, obj_neg_samples)
+        else:
+            for i in xrange(batch_size):
+                i_range = (i + self.batch_index) % self.n_relation_triples
+                triples[i] = np.asarray(list(self.relation_triples[i_range]), dtype=theano.config.floatX)
+
+            return (triples,)
+
+
