@@ -219,6 +219,20 @@ def rmsprop(lr, tparams, grads, x_triples, x_subj_neg, x_obj_neg, cost):
     return f_grad_shared, f_update
 
 
+def mrr(ranks):
+    if "float" not in str(ranks.dtype):
+        ranks = numpy_floatX(ranks)
+
+    return np.mean(1 / ranks)
+
+
+def hits_at_k(ranks, k):
+    if "float" not in str(ranks.dtype):
+        ranks = numpy_floatX(ranks)
+
+    return float(np.nonzero(ranks <= k)[0].shape[0]) / float(ranks.shape[0])
+
+
 def train_model(
         param_names,            # list of parameter names - note that the order is important
         dim_emb=10,                 # Dimensionality of the embeddings of entities and relations
@@ -230,7 +244,7 @@ def train_model(
         L2_reg=1.0,                  # L2 regularisation coefficient
         max_epochs=100,              # max number of epochs to train
         batch_size=128,
-        lrate=0.0001,
+        lrate=0.001,
         dispFreq=10,
         saveFreq=1110,
         validFreq=370,
@@ -240,7 +254,7 @@ def train_model(
         num_train=1000
 ):
     model_options = locals().copy()  # has all the parameters required for the model
-    logging.info("model options", model_options)
+    print("model options", model_options)
 
     logging.info("loading train KB data")
     train_dataset = Reader.read_data(config.KBTrainFile)
@@ -297,22 +311,11 @@ def train_model(
     valid_triples = valid_dataset.generate_batch(full_data=True, no_neg=True)[0].astype(np.int32)
     test_triples = test_dataset.generate_batch(full_data=True, no_neg=True)[0].astype(np.int32)
 
-    k = T.iscalar()
-    metrics_train = model.metrics(x_triples, k, train_dataset.n_entities, len(train_triples))
-    metrics_valid = model.metrics(x_triples, k, train_dataset.n_entities, len(valid_triples))
-    metrics_test = model.metrics(x_triples, k, train_dataset.n_entities, len(test_triples))
-
-    eval_funcs = []
-    k_val = theano.shared(np.array(100, dtype=np.int32))
-    for metrics in [metrics_train, metrics_valid, metrics_test]:
-        eval_func = theano.function(
-            inputs=[x_triples],
-            outputs=metrics['hits@k'],
-            givens={
-                k: k_val
-            }
-        )
-        eval_funcs.append(eval_func)
+    pred_ranks = model.pred_ranks(x_triples)
+    get_pred_ranks = theano.function(
+        inputs=[x_triples],
+        outputs=pred_ranks
+    )
 
     history_errs = []
     best_p = None
@@ -343,7 +346,7 @@ def train_model(
 
                 if np.isnan(cost) or np.isinf(cost):
                     print('bad cost detected: ', cost)
-                    return 1., 1., 1.
+                    return 0., 0., 0., model, None
 
                 if np.mod(uidx, dispFreq) == 0:
                     print('Epoch ', eidx, 'Update ', uidx, 'Cost ', cost)
@@ -361,9 +364,14 @@ def train_model(
 
                 if np.mod(uidx, validFreq) == 0:
 
-                    train_err = eval_funcs[0](train_triples_kf)
-                    valid_err = eval_funcs[1](valid_triples)
-                    test_err = eval_funcs[2](test_triples)
+                    train_ranks = get_pred_ranks(train_triples_kf)
+                    valid_ranks = get_pred_ranks(valid_triples)
+                    test_ranks = get_pred_ranks(test_triples)
+
+                    train_err = mrr(train_ranks)
+                    valid_err = mrr(valid_ranks)
+                    test_err = mrr(test_ranks)
+
                     history_errs.append([valid_err, test_err])
 
                     if (best_p is None or
@@ -402,11 +410,11 @@ def train_model(
     print('calculating training err')
 
     # kf = get_minibatches_idx(len(train_triples), batch_size, shuffle=False)
-    train_err = eval_funcs[0](train_triples)
+    train_err = mrr(get_pred_ranks(train_triples))
     print('calculating validation err')
-    valid_err = eval_funcs[1](valid_triples)
+    valid_err = mrr(get_pred_ranks(valid_triples))
     print('calculating test err')
-    test_err = eval_funcs[2](test_triples)
+    test_err = mrr(get_pred_ranks(test_triples))
 
     print( 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err )
     if saveto:
@@ -417,15 +425,18 @@ def train_model(
         (eidx + 1), (end_time - start_time) / (1. * (eidx + 1))))
     print( ('Training took %.1fs' %
             (end_time - start_time)), file=sys.stderr )
-    return train_err, valid_err, test_err
+    return train_err, valid_err, test_err, model, None
 
 if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
-    train_model(
-        param_names=['ent_emb', 'rel_emb'],
-        max_epochs=100,
+    _, _, _, model, debug = train_model(
+        param_names=[config.ENTITY_EMBEDDINGS, config.RELATION_EMBEDDINGS],
+        max_epochs=10,
         full_train=False,
-        num_train=3000
+        num_train=4096,
+        L2_reg=0.1,
+        L1_reg=0.01,
+        batch_size=512
     )
 
 

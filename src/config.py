@@ -21,3 +21,5 @@ if not hasattr(theano.config, "floatX"):
 # Training and Optimization params
 batchSize = 100
 numNegSamples = 100
+ENTITY_EMBEDDINGS = "ent_emb"
+RELATION_EMBEDDINGS = "rel_emb"

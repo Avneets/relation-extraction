@@ -3,6 +3,8 @@ import theano
 import theano.tensor as T
 import numpy as np
 import time
+import config
+import logging
 
 
 class Model(object):
@@ -112,24 +114,26 @@ class DistMult(Model):
         self.L1_reg = L1_reg
         self.L2_reg = L2_reg
 
-        if (params is None) or (params.has_key('ent_emb') and (params['ent_emb'] is None)):
+        if (params is None) or ((config.ENTITY_EMBEDDINGS in params) and (params[config.ENTITY_EMBEDDINGS] is None)):
             # Entity embedding initialisation. Change later!
             ent_embeddings_init = np.asarray(rng.randn(n_entities, n_dim), dtype=theano.config.floatX)
         else:
-            ent_embeddings_init = params['ent_emb']
+            ent_embeddings_init = params[config.ENTITY_EMBEDDINGS]
+        logging.debug("Initial mean and std of entity_embeddings = (%f, %f)" % (np.mean(ent_embeddings_init), np.std(ent_embeddings_init)))
 
-        if (params is None) or (params.has_key('rel_emb') and (params['rel_emb'] is None)):
+        if (params is None) or ((config.RELATION_EMBEDDINGS in params) and (params[config.RELATION_EMBEDDINGS] is None)):
             # Relation embedding initialisation. Change later!
             rel_embeddings_init = np.asarray(rng.randn(n_relations, n_dim), dtype=theano.config.floatX)
         else:
-            rel_embeddings_init = params['rel_emb']
+            rel_embeddings_init = params[config.RELATION_EMBEDDINGS]
+        logging.debug("Initial mean and std of relation_embeddings = (%f, %f)" % (np.mean(rel_embeddings_init), np.std(rel_embeddings_init)))
 
         entity_embeddings = theano.shared(ent_embeddings_init, name='entity_embeddings', borrow=True)
         relation_embeddings = theano.shared(rel_embeddings_init, name='relation_embeddings', borrow=True)
         self.entity_embeddings = entity_embeddings
         self.relation_embeddings = relation_embeddings
 
-        self.tparams = {"ent_emb": self.entity_embeddings, "rel_emb": self.relation_embeddings}
+        self.tparams = {config.ENTITY_EMBEDDINGS: self.entity_embeddings, config.RELATION_EMBEDDINGS: self.relation_embeddings}
 
         self.L2 = (self.entity_embeddings ** 2).sum() + (self.relation_embeddings ** 2).sum()
         self.L1 = abs(self.entity_embeddings).sum() + abs(self.relation_embeddings).sum()
@@ -197,6 +201,17 @@ class DistMult(Model):
         return (self.loss_on_set2(in_triples, in_sub_neg_samples_list, in_obj_neg_samples_list) +
         self.L1_reg * self.get_L1() + self.L2_reg * self.get_L2())
 
+    def pred_ranks(self, in_triples):
+        e_ss = in_triples[:, 0]
+        rs = in_triples[:, 1]
+        e_os = in_triples[:, 2]
+
+        scores = T.dot( (self.entity_embeddings[e_ss]*self.relation_embeddings[rs]), self.entity_embeddings.T )
+        e_os_scores = scores[T.arange(scores.shape[0]), e_os]
+        ranks_os = T.cast( scores >= e_os_scores.reshape((-1,1)), dtype=theano.config.floatX ).sum(axis=1)
+
+        return ranks_os
+
     def metrics(self, in_triples, k, n_entities, num_triples):
         # n_entities, num_triples - hack to over come the fact that T.cast(arr, recs)
         # need constant recs! Change this later.
@@ -211,11 +226,10 @@ class DistMult(Model):
         mrr = T.mean(1 / ranks_os)
         hits = T.cast(T.nonzero(ranks_os <= k)[0].shape[0], dtype=theano.config.floatX) / T.cast(ranks_os.shape[0], dtype=theano.config.floatX)
 
-        return {'mrr': T.mean(1 / ranks_os),
-                'hits@k':
-                    T.cast(T.nonzero(ranks_os <= k)[0].shape[0], dtype=theano.config.floatX) /
-                    T.cast(ranks_os.shape[0], dtype=theano.config.floatX)
+        return {'mrr': mrr,
+                'hits@k': hits
                 }
+
 
 if __name__ == "__main__":
     # A dummy model
@@ -260,16 +274,15 @@ if __name__ == "__main__":
     end = time.time()
     print("Time taken to run test = %f s" % (end - start))
 
-    k = T.iscalar()
-    k_val = theano.shared(np.array(15000, dtype=np.int32))
-    metrics = dist_mult_model.metrics(in_triples, k, 30000, 284)
+    pred_ranks = dist_mult_model.pred_ranks(in_triples)
     eval_model = theano.function(
         inputs=[],
-        outputs=[metrics['mrr'],metrics['hits@k']],
+        outputs=pred_ranks,
         givens={
-            in_triples: in_triples_init[:284].astype(dtype=np.int32),
-            k: k_val
+            in_triples: in_triples_init[:284].astype(dtype=np.int32)
         }
     )
-    eval_results = eval_model()
-    print("dummy mrr and hits@15000 for 30000 entities = (%f, %f)" % (eval_results[0], eval_results[1]))
+    ranks = eval_model()
+    k = 15000
+    print( "dummy mrr and hits@%d for 30000 entities = (%f, %f)" % ( k, np.mean(1 / ranks), float(np.nonzero(ranks <= k)[0].shape[0]) / float(ranks.shape[0]) ) )
+
