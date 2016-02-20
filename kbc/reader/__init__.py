@@ -1,1 +1,1 @@
-from reader import Reader
+from kb_reader import KBReader

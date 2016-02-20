@@ -1,16 +1,11 @@
 from abc import ABCMeta, abstractmethod
+from collections import OrderedDict
 
 import numpy as np
 import theano
 import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import lasagne
-
-from kbc.utils import config
-
-import time
-import logging
-from collections import OrderedDict
 
 
 # Similarity functions -------------------------------------------------------

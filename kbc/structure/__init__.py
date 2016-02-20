@@ -1,1 +1,1 @@
-from structure import RelationTripleSet
+from kb import KB
