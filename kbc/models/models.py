@@ -141,7 +141,7 @@ class Model3(Model):
 
         scores = T.dot( (e_embedding.E[e_ss]*r_embedding.E[rs]), e_embedding.E.T )
         e_os_scores = scores[T.arange(scores.shape[0]), e_os]
-        ranks_os = T.cast( scores >= e_os_scores.reshape((-1, 1)), dtype=theano.config.floatX ).sum(axis=1)
+        ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
         return theano.function([in_triples], [ranks_os])
 
@@ -151,7 +151,9 @@ class Model3(Model):
 
         cost, out = self.cost(pos_triples, neg_triples, marge)
         params = [self.embeddings[0].E, self.embeddings[1].E]
-        updates = lasagne.updates.sgd(cost, params, lrate)
+        # updates = lasagne.updates.sgd(cost, params, lrate)
+        updates = lasagne.updates.adagrad(cost, params, lrate) # way faster convergence
+        # updates = lasagne.updates.sgd(cost, params, lrate) # slow like sgd (probably slower)
 
         return theano.function([pos_triples, neg_triples], [cost, out], updates=updates)
 

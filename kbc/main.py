@@ -32,7 +32,7 @@ def get_minibatches_idx(n, minibatch_size, shuffle=False):
     return zip(range(len(minibatches)), minibatches)
 
 
-def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=100, dim_emb=50, L1_reg=0.0, L2_reg=0.0, learning_rate=0.01, batch_size=128, params=None):
+def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=100, dim_emb=50, L1_reg=0.0, L2_reg=0.0, learning_rate=0.01, batch_size=128, disp_freq=200, valid_frac=0.2, test_frac=0.2, params=None):
     # Load the dataset
     print("Loading data...")
     model_options = locals().copy()  # has all the parameters required for the model
@@ -61,8 +61,9 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
         train_triples = train_dataset.generate_batch(full_data=True, no_neg=True)[0].astype(np.int32)
     else:
         train_triples = train_dataset.generate_batch(batch_size=num_train, no_neg=True)[0].astype(np.int32)
-    valid_triples = valid_dataset.generate_batch(full_data=True, no_neg=True)[0].astype(np.int32)
-    test_triples = test_dataset.generate_batch(full_data=True, no_neg=True)[0].astype(np.int32)
+    valid_triples = valid_dataset.generate_batch(batch_size=int(valid_frac * valid_dataset.n_relation_triples), no_neg=True)[0].astype(np.int32)
+    # valid_triples = train_dataset.generate_batch(batch_size=num_train, no_neg=True)[0].astype(np.int32)
+    test_triples = test_dataset.generate_batch(batch_size=int(test_frac * test_dataset.n_relation_triples), no_neg=True)[0].astype(np.int32)
 
     n_entities = train_dataset.n_entities
     n_relations = train_dataset.n_relations
@@ -74,22 +75,9 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
     train_fn = model.train_fn(learning_rate, marge=1.0)
     ranks_fn = model.ranks_fn()
 
-
-    # Finally, launch the training loop.
-    print("Starting training...")
-    train_ranks = ranks_fn(train_triples)
-    valid_ranks = ranks_fn(valid_triples)
-    test_ranks = ranks_fn(test_triples)
-
-    train_err = np.mean(train_ranks)
-    valid_err = np.mean(valid_ranks)
-    test_err = np.mean(test_ranks)
-
-    # Then we print the results for this epoch:
-
-    print("  mean training triples rank: %f" % train_err)
-    print("  mean validation triples rank: %f" % valid_err)
-    print("  mean test triples rank: %f" % test_err)
+    uidx = 0
+    bins = [1, 11, 101, 1001, 10001]
+    print("The eval is being printed with number of items the bins -> %s" % bins)
     # We iterate over epochs:
     for epoch in range(num_epochs):
         # In each epoch, we do a full pass over the training data:
@@ -122,23 +110,38 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
                 print('bad cost detected! Cost is ' + str(cost))
                 return
 
-        train_ranks = ranks_fn(tmb)
-        valid_ranks = ranks_fn(valid_triples)
-        test_ranks = ranks_fn(test_triples)
+            if uidx % disp_freq == 0:
+                train_ranks = ranks_fn(tmb)
+                valid_ranks = ranks_fn(valid_triples)
+                test_ranks = ranks_fn(test_triples)
 
-        train_err = np.mean(train_ranks)
-        valid_err = np.mean(valid_ranks)
-        test_err = np.mean(test_ranks)
+                train_err = np.mean(train_ranks)
+                valid_err = np.mean(valid_ranks)
+                test_err = np.mean(test_ranks)
 
-        # Then we print the results for this epoch:
-        print("Epoch {} of {} took {:.3f}s".format(
-            epoch + 1, num_epochs, time.time() - start_time))
-        print("  mean training triples rank: %f" % train_err)
-        print("  mean validation triples rank: %f" % valid_err)
-        print("  mean test triples rank: %f" % test_err)
+                train_dist = np.histogram(train_ranks[0], bins)
+                valid_dist = np.histogram(valid_ranks[0], bins)
+                test_dist = np.histogram(test_ranks[0], bins)
+
+                # Then we print the results for this epoch:
+                print("Epoch {} of {} uidx {} took {:.3f}s".format(
+                    epoch + 1, num_epochs, uidx, time.time() - start_time))
+                print("  mean training triples rank: %f" % train_err)
+                print("  mean validation triples rank: %f" % valid_err)
+                print("  mean test triples rank: %f" % test_err)
+                print("  training triples rank dist: %s" % train_dist[0])
+                print("  mean validation triples rank dist: %s" % valid_dist[0])
+                print("  mean test triples rank: %s" % test_dist[0])
+
+            uidx += 1
 
     # After training, we compute and print the test error:
-    train_ranks = ranks_fn(train_triples)
+    # train_triples are pretty big. So split and calculate ranks
+
+    # train_ranks = []
+    # print("Evaluating on all training data")
+    # for _, train_index in get_minibatches_idx(len(train_triples), batch_size, False):
+    #     train_ranks += list(ranks_fn(train_triples[train_index])[0])
     valid_ranks = ranks_fn(valid_triples)
     test_ranks = ranks_fn(test_triples)
 
@@ -149,11 +152,14 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
     # Then we print the results for this epoch:
     print("Epoch {} of {} took {:.3f}s".format(
         epoch + 1, num_epochs, time.time() - start_time))
-    print("  mean training triples rank: %f" % train_err)
+    # print("  mean training triples rank: %f" % train_err)
     print("  mean validation triples rank: %f" % valid_err)
     print("  mean test triples rank: %f" % test_err)
+
+    # return all stuff needed for debugging
+    return train_ranks, valid_ranks
 
 
 if __name__ == '__main__':
     rng = np.random
-    main(rng)
+    ranks = main(rng, num_epochs=1000, num_train=150000, disp_freq=2000, valid_frac=0.2, test_frac=0.2)

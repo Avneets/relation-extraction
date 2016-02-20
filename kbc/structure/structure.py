@@ -86,10 +86,12 @@ class RelationTripleSet(object):
                 sub_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, True)
                 obj_neg_samples[i] = self.sample_negative_instances(self.relation_triples[i_range], num_neg_samples, False)
 
+            self.batch_index = (self.batch_index + batch_size) % self.n_relation_triples
+
             return (triples, sub_neg_samples, obj_neg_samples)
         else:
             for i in xrange(batch_size):
                 i_range = (i + self.batch_index) % self.n_relation_triples
                 triples[i] = np.asarray(list(self.relation_triples[i_range]), dtype=theano.config.floatX)
-
+            self.batch_index = (self.batch_index + batch_size) % self.n_relation_triples
             return (triples,)
