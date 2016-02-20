@@ -68,7 +68,7 @@ def parse_embeddings(embeddings):
 class Embeddings(object):
     """ Class for the embeddings matrix. """
 
-    def __init__(self, rng, N, D, tag=''):
+    def __init__(self, rng, N, D, tag='', W_init=None):
         """
         Constructor
 
@@ -79,10 +79,14 @@ class Embeddings(object):
         """
         self.N = N
         self.D = D
-        wbound = np.sqrt(6. / D)
-        W_values = rng.uniform(low=-wbound, high=wbound, size=(N, D))
-        W_norm = np.sqrt(np.sum(W_values ** 2, axis=1)).reshape((N, 1))
-        W_values = W_values / W_norm
+        self.tag = tag
+        if W_init is None:
+            wbound = np.sqrt(6. / D)
+            W_values = rng.uniform(low=-wbound, high=wbound, size=(N, D))
+            W_norm = np.sqrt(np.sum(W_values ** 2, axis=1)).reshape((N, 1))
+            W_values = W_values / W_norm
+        else:
+            W_values = W_init
         self.E = theano.shared(value=W_values, name='E' + tag)
         # Define a normalization function with respect to the L_2 norm of the
         # embedding vectors.
@@ -97,7 +101,7 @@ class Model(object):
 
 class Model3(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -105,8 +109,16 @@ class Model3(Model):
         self.n_relations = n_relations
         self.n_dim = n_dim
 
-        self.r_embedding = Embeddings(self.rng, n_relations, n_dim, 'rel')
-        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, 'ent')
+        self.e_embedding_tag = 'model3-ent'
+        self.r_embedding_tag = 'model3-rel'
+
+        e_embedding_init=None
+        r_embedding_init=None
+        if params is not None:
+            e_embedding_init = params[self.e_embedding_tag]
+            r_embedding_init = params[self.r_embedding_tag]
+        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init)
+        self.r_embedding = Embeddings(self.rng, n_relations, n_dim, self.r_embedding_tag, r_embedding_init)
         self.embeddings = [self.e_embedding, self.r_embedding]
 
     def normalize(self):
@@ -165,7 +177,7 @@ class Model3(Model):
 
 class Model2(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -173,9 +185,21 @@ class Model2(Model):
         self.n_relations = n_relations
         self.n_dim = n_dim
 
-        self.rl_embedding = Embeddings(self.rng, n_relations, n_dim, 'rel_l')
-        self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, 'rel_r')
-        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, 'ent')
+        self.e_embedding_tag = 'model2-ent'
+        self.rl_embedding_tag = 'model2-rell'
+        self.rr_embedding_tag = 'model2-relr'
+
+        e_embedding_init=None
+        rl_embedding_init=None
+        rr_embedding_init=None
+        if params is not None:
+            e_embedding_init = params[self.e_embedding_tag]
+            rl_embedding_init = params[self.rl_embedding_tag]
+            rr_embedding_init = params[self.rr_embedding_tag]
+
+        self.rl_embedding = Embeddings(self.rng, n_relations, n_dim, self.rl_embedding_tag, rl_embedding_init)
+        self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, self.rr_embedding_tag, rr_embedding_init)
+        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init)
         self.embeddings = [self.e_embedding, self.rl_embedding, self.rr_embedding]
 
     def normalize(self):
@@ -231,7 +255,7 @@ class Model2(Model):
 
 class Model2plus3(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -239,8 +263,8 @@ class Model2plus3(Model):
         self.n_relations = n_relations
         self.n_dim = n_dim
 
-        self.model2 = Model2(n_entities, n_relations, n_dim)
-        self.model3 = Model3(n_entities, n_relations, n_dim)
+        self.model2 = Model2(n_entities, n_relations, n_dim, params)
+        self.model3 = Model3(n_entities, n_relations, n_dim, params)
 
         self.embeddings = self.model2.embeddings + self.model3.embeddings
 
@@ -277,4 +301,4 @@ class Model2plus3(Model):
 
 if __name__ == "__main__":
     # @TODO: write some unit tests
-    pass
+    model3 = Model3(14000, 300, 40)

@@ -74,3 +74,6 @@ if __name__ == "__main__":
                                       relation_dict=train_dataset.relation_index,
                                       add_new=False
                                       )
+    train_dataset.print_set_statistics()
+    valid_dataset.print_set_statistics()
+    test_dataset.print_set_statistics()
