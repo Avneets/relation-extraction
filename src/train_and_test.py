@@ -137,7 +137,7 @@ def adadelta(lr, tparams, grads, x_triples, x_subj_neg, x_obj_neg, cost):
              for rg2, g in zip(running_grads2, grads)]
 
     f_grad_shared = theano.function([x_triples, x_subj_neg, x_obj_neg], cost, updates=zgup + rg2up,
-                                    name='adadelta_f_grad_shared')
+                                    name='adadelta_f_grad_shared', on_unused_input='ignore')
 
     updir = [-T.sqrt(ru2 + 1e-6) / T.sqrt(rg2 + 1e-6) * zg
              for zg, ru2, rg2 in zip(zipped_grads,
@@ -202,7 +202,8 @@ def rmsprop(lr, tparams, grads, x_triples, x_subj_neg, x_obj_neg, cost):
 
     f_grad_shared = theano.function([x_triples, x_subj_neg, x_obj_neg], cost,
                                     updates=zgup + rgup + rg2up,
-                                    name='rmsprop_f_grad_shared')
+                                    name='rmsprop_f_grad_shared',
+                                    on_unused_input='ignore')
 
     updir = [theano.shared(p.get_value() * numpy_floatX(0.),
                            name='%s_updir' % k)
@@ -251,10 +252,12 @@ def train_model(
         saveto='distmult_model.npz',
         patience=10,
         full_train=True,
-        num_train=1000
+        num_train=1000,
+        num_neg_samples=100
 ):
     model_options = locals().copy()  # has all the parameters required for the model
     print("model options", model_options)
+    debug_data = {}
 
     logging.info("loading train KB data")
     train_dataset = Reader.read_data(config.KBTrainFile)
@@ -275,9 +278,9 @@ def train_model(
     test_dataset.print_set_statistics()
     logging.info("generating full train data with negative samples")
     if full_train:
-        batch_data = train_dataset.generate_batch(full_data=True)
+        batch_data = train_dataset.generate_batch(full_data=True, num_neg_samples=num_neg_samples)
     else:
-        batch_data = train_dataset.generate_batch(batch_size=num_train)
+        batch_data = train_dataset.generate_batch(batch_size=num_train, num_neg_samples=num_neg_samples)
 
     logging.info("building model")
 
@@ -293,6 +296,7 @@ def train_model(
                             L1_reg=L1_reg,
                             L2_reg=L2_reg,
                             params=params)
+    debug_data['model'] = model
 
     tparams = model.get_tparams()
 
@@ -301,6 +305,13 @@ def train_model(
     x_obj_neg = T.imatrix()             # in_obj_neg_samples_mat
 
     cost = model.total_cost(x_triples, x_subj_neg, x_obj_neg)
+
+    # debug stuff
+    loss = model.loss_on_set(x_triples, x_subj_neg, x_obj_neg)
+    get_cost = theano.function([x_triples, x_subj_neg, x_obj_neg], cost, on_unused_input='ignore')
+    get_loss = theano.function([x_triples, x_subj_neg, x_obj_neg], loss, on_unused_input='ignore')
+    debug_data['get_cost'] = get_cost
+    debug_data['get_loss'] = get_loss
 
     grads = T.grad(cost, wrt=list(tparams.values()))
     lr = T.scalar(name='lr')
@@ -314,7 +325,8 @@ def train_model(
     pred_ranks = model.pred_ranks(x_triples)
     get_pred_ranks = theano.function(
         inputs=[x_triples],
-        outputs=pred_ranks
+        outputs=pred_ranks,
+        on_unused_input='ignore'
     )
 
     history_errs = []
@@ -335,21 +347,27 @@ def train_model(
                 uidx += 1
 
                 # change to floatX and T.cast into int for performance
-                train_triples_kf = train_triples[train_index]
+                train_triples_minibatch = train_triples[train_index]
                 train_sub_neg = batch_data[1][train_index].astype(np.int32)
                 train_obj_neg = batch_data[2][train_index].astype(np.int32)
 
-                n_samples += len(train_triples_kf)
+                 # debug
+                debug_data['train_data'] = train_triples_minibatch
+                debug_data['train_sub_neg'] = train_sub_neg
+                debug_data['train_obj_neg'] = train_obj_neg
 
-                cost = f_grad_shared(train_triples_kf, train_sub_neg, train_obj_neg)
+                n_samples += len(train_triples_minibatch)
+
+                cost = f_grad_shared(train_triples_minibatch, train_sub_neg, train_obj_neg)
                 f_update(lrate)
 
                 if np.isnan(cost) or np.isinf(cost):
                     print('bad cost detected: ', cost)
-                    return 0., 0., 0., model, None
+                    return 0., 0., 0., model, debug_data
 
                 if np.mod(uidx, dispFreq) == 0:
-                    print('Epoch ', eidx, 'Update ', uidx, 'Cost ', cost)
+                    loss = get_loss(train_triples_minibatch, train_sub_neg, train_obj_neg)
+                    print('Epoch ', eidx, 'Update ', uidx, 'Cost ', cost, 'Loss ', loss)
 
                 if saveto and np.mod(uidx, saveFreq) == 0:
                     print('Saving...')
@@ -364,13 +382,15 @@ def train_model(
 
                 if np.mod(uidx, validFreq) == 0:
 
-                    train_ranks = get_pred_ranks(train_triples_kf)
+                    train_ranks = get_pred_ranks(train_triples_minibatch)
                     valid_ranks = get_pred_ranks(valid_triples)
                     test_ranks = get_pred_ranks(test_triples)
 
                     train_err = mrr(train_ranks)
                     valid_err = mrr(valid_ranks)
                     test_err = mrr(test_ranks)
+
+                    debug_data['ranks'] = [train_ranks, valid_ranks, test_ranks]
 
                     history_errs.append([valid_err, test_err])
 
@@ -425,18 +445,20 @@ def train_model(
         (eidx + 1), (end_time - start_time) / (1. * (eidx + 1))))
     print( ('Training took %.1fs' %
             (end_time - start_time)), file=sys.stderr )
-    return train_err, valid_err, test_err, model, None
+    return train_err, valid_err, test_err, model, debug_data
+
 
 if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
     _, _, _, model, debug = train_model(
         param_names=[config.ENTITY_EMBEDDINGS, config.RELATION_EMBEDDINGS],
-        max_epochs=10,
+        max_epochs=30,
         full_train=False,
         num_train=4096,
-        L2_reg=0.1,
-        L1_reg=0.01,
-        batch_size=512
+        L2_reg=0.5,
+        L1_reg=0.0,
+        batch_size=512,
+        num_neg_samples=config.numNegSamples
     )
 
 
