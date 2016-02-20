@@ -71,7 +71,7 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
     # Create neural network model (depending on first command line parameter)
     print("Building model and compiling functions...")
 
-    model = models.Model3(n_entities, n_relations, dim_emb)
+    model = models.Model2plus3(n_entities, n_relations, dim_emb)
     train_fn = model.train_fn(learning_rate, marge=1.0)
     ranks_fn = model.ranks_fn()
 
@@ -86,7 +86,7 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
         start_time = time.time()
         for _, train_index in get_minibatches_idx(len(train_triples), batch_size, False):
             # Normalize the entity embeddings
-            model.e_embedding.normalize()
+            model.normalize()
 
             tmb = train_triples[train_index]
 
@@ -99,12 +99,12 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
             tmbrn[:, [0, 1]] = tmb[:, [0, 1]]
             tmbrn[:, 2] = rng.randint(0, n_entities, tmb.shape[0])
 
-            costl, outl = train_fn(tmb, tmbln)
-            costr, outr = train_fn(tmb, tmbrn)
+            costl = train_fn(tmb, tmbln)[0]
+            costr = train_fn(tmb, tmbrn)[0]
 
             cost = costl + costr
 
-            print('Epoch ', epoch, 'Cost ', cost)
+            print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
 
             if np.isnan(cost) or np.isinf(cost):
                 print('bad cost detected! Cost is ' + str(cost))
@@ -130,8 +130,8 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
                 print("  mean validation triples rank: %f" % valid_err)
                 print("  mean test triples rank: %f" % test_err)
                 print("  training triples rank dist: %s" % train_dist[0])
-                print("  mean validation triples rank dist: %s" % valid_dist[0])
-                print("  mean test triples rank: %s" % test_dist[0])
+                print("  validation triples rank dist: %s" % valid_dist[0])
+                print("  test triples rank dist: %s" % test_dist[0])
 
             uidx += 1
 
@@ -162,4 +162,4 @@ def main(rng, num_epochs=500, full_train=False, num_train=5000, num_neg_samples=
 
 if __name__ == '__main__':
     rng = np.random
-    ranks = main(rng, num_epochs=1000, num_train=150000, disp_freq=2000, valid_frac=0.2, test_frac=0.2)
+    ranks = main(rng, num_epochs=20, num_train=5000, disp_freq=100, valid_frac=0.2, test_frac=0.2)

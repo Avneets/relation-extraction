@@ -114,6 +114,9 @@ class Model3(Model):
         self.e_embedding = Embeddings(self.rng, n_entities, n_dim, 'ent')
         self.embeddings = [self.e_embedding, self.r_embedding]
 
+    def normalize(self):
+        self.e_embedding.normalize()
+
     def cost(self, pos_triples, neg_triples, marge=1.0):
         e_ss = pos_triples[:, 0]
         rs = pos_triples[:, 1]
@@ -130,6 +133,13 @@ class Model3(Model):
 
         cost, out = margin_cost(pos, neg, marge)
         return cost, out
+
+    def all_ent_scores(self, in_triples):
+        e_ss = in_triples[:, 0]
+        rs = in_triples[:, 1]
+        e_embedding, r_embedding = self.embeddings
+        scores = T.dot( (e_embedding.E[e_ss]*r_embedding.E[rs]), e_embedding.E.T )
+        return scores
 
     def ranks_fn(self):
         in_triples = T.imatrix()
@@ -156,6 +166,118 @@ class Model3(Model):
         # updates = lasagne.updates.sgd(cost, params, lrate) # slow like sgd (probably slower)
 
         return theano.function([pos_triples, neg_triples], [cost, out], updates=updates)
+
+
+class Model2(Model):
+
+    def __init__(self, n_entities, n_relations, n_dim=10):
+        self.rng = np.random
+        self.srng = MRG_RandomStreams
+
+        self.n_entities = n_entities
+        self.n_relations = n_relations
+        self.n_dim = n_dim
+
+        self.rl_embedding = Embeddings(self.rng, n_relations, n_dim, 'rel_l')
+        self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, 'rel_r')
+        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, 'ent')
+        self.embeddings = [self.e_embedding, self.rl_embedding, self.rr_embedding]
+
+    def normalize(self):
+        self.e_embedding.normalize()
+
+    def cost(self, pos_triples, neg_triples, marge=1.0):
+        e_ss = pos_triples[:, 0]
+        rs = pos_triples[:, 1]
+        e_os = pos_triples[:, 2]
+
+        e_ssn = neg_triples[:, 0]
+        rsn = neg_triples[:, 1]
+        e_osn = neg_triples[:, 2]
+
+        e_embedding, rl_embedding, rr_embedding = self.embeddings
+
+        pos = T.sum(e_embedding.E[e_ss] * rl_embedding.E[rs], axis=1) + T.sum(rr_embedding.E[rs] * e_embedding.E[e_os], axis=1)
+        neg = T.sum(e_embedding.E[e_ssn] * rl_embedding.E[rsn], axis=1) + T.sum(rr_embedding.E[rsn] * e_embedding.E[e_osn], axis=1)
+
+        cost, out = margin_cost(pos, neg, marge)
+        return cost, out
+
+    def all_ent_scores(self, in_triples):
+        rs = in_triples[:, 1]
+        e_embedding, _, rr_embedding = self.embeddings
+        scores = T.dot( (rr_embedding.E[rs]), e_embedding.E.T )
+        return scores
+
+    def ranks_fn(self):
+        in_triples = T.imatrix()
+        e_ss = in_triples[:, 0]
+        rs = in_triples[:, 1]
+        e_os = in_triples[:, 2]
+
+        e_embedding, rl_embedding, rr_embedding = self.embeddings
+
+        scores = T.dot( (rr_embedding.E[rs]), e_embedding.E.T )
+        e_os_scores = scores[T.arange(scores.shape[0]), e_os]
+        ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
+
+        return theano.function([in_triples], [ranks_os])
+
+    def train_fn(self, lrate=0.01, marge=1.0):
+        pos_triples = T.imatrix()
+        neg_triples = T.imatrix()
+
+        cost, out = self.cost(pos_triples, neg_triples, marge)
+        params = [self.embeddings[0].E, self.embeddings[1].E, self.embeddings[2].E]
+        updates = lasagne.updates.adagrad(cost, params, lrate)
+
+        return theano.function([pos_triples, neg_triples], [cost, out], updates=updates)
+
+
+class Model2plus3(Model):
+
+    def __init__(self, n_entities, n_relations, n_dim=10):
+        self.rng = np.random
+        self.srng = MRG_RandomStreams
+
+        self.n_entities = n_entities
+        self.n_relations = n_relations
+        self.n_dim = n_dim
+
+        self.model2 = Model2(n_entities, n_relations, n_dim)
+        self.model3 = Model3(n_entities, n_relations, n_dim)
+
+        self.embeddings = self.model2.embeddings + self.model3.embeddings
+
+    def normalize(self):
+        self.model2.normalize()
+        self.model3.normalize()
+
+    def ranks_fn(self):
+        in_triples = T.imatrix()
+        e_ss = in_triples[:, 0]
+        rs = in_triples[:, 1]
+        e_os = in_triples[:, 2]
+
+        scores2 = self.model2.all_ent_scores(in_triples)
+        scores3 = self.model3.all_ent_scores(in_triples)
+        scores = scores2 + scores3
+        e_os_scores = scores[T.arange(scores.shape[0]), e_os]
+        ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
+
+        return theano.function([in_triples], [ranks_os])
+
+    def train_fn(self, lrate=0.01, marge=1.0):
+        pos_triples = T.imatrix()
+        neg_triples = T.imatrix()
+
+        cost2, out2 = self.model2.cost(pos_triples, neg_triples, marge)
+        cost3, out3 = self.model3.cost(pos_triples, neg_triples, marge)
+        cost = cost2 + cost3
+        params = [embedding.E for embedding in self.embeddings]
+        updates = lasagne.updates.adagrad(cost, params, lrate)
+
+        return theano.function([pos_triples, neg_triples], [cost, out2, out3], updates=updates)
 
 
 if __name__ == "__main__":
