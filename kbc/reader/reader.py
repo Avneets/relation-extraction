@@ -1,6 +1,6 @@
-import config
+from kbc.utils import config
 import logging
-from structure import RelationTripleSet
+from kbc.structure import RelationTripleSet
 import numpy as np
 
 class Reader(object):

@@ -6,7 +6,7 @@ import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import lasagne
 
-import config
+from kbc.utils import config
 
 import time
 import logging

@@ -1,4 +1,4 @@
-import config
+from kbc.utils import config
 import theano
 import theano.tensor as T
 import numpy as np
@@ -93,5 +93,3 @@ class RelationTripleSet(object):
                 triples[i] = np.asarray(list(self.relation_triples[i_range]), dtype=theano.config.floatX)
 
             return (triples,)
-
-

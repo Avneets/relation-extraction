@@ -2,9 +2,9 @@ import theano
 import theano.tensor as T
 import numpy as np
 import lasagne
-from reader import Reader
-import config
-import models
+from kbc.reader import Reader
+from kbc.utils import config
+from kbc.models import models
 import time
 
 
