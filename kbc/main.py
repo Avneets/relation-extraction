@@ -1,5 +1,5 @@
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import six.moves.cPickle as pickle
 
 import numpy as np
@@ -54,6 +54,37 @@ def load_params(path):
     return pp
 
 
+def get_ranks(scores, e_os):
+    e_os_scores = scores[np.arange(scores.shape[0]), e_os]
+    ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
+
+    return ranks_os
+
+
+def build_sub_rel_index(*triple_sets):
+    sr_index_set = defaultdict(set)
+    for triple_set in triple_sets:
+        for triple in triple_set:
+            s, r, o = triple
+            sr_index_set[(s, r)].add(o)
+    sr_index = dict()
+    for k, v in sr_index_set.items():
+        sr_index[k] = np.array(list(v))
+    return sr_index
+
+
+def get_discounted_ranks(scores, in_triples, sr_index):
+    e_os = in_triples[:, 2]
+    e_os_scores = scores[np.arange(scores.shape[0]), e_os]
+    ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
+
+    competing_indices = [ sr_index[tuple(sr_pair)] for sr_pair in in_triples[:, :2] ]
+    competing_scores = np.array([ np.sum(scores[index, competing_list] >= e_os_scores[index]) for index, competing_list in enumerate(competing_indices) ])
+
+    ranks_os = ranks_os - competing_scores
+    return ranks_os
+
+
 def main(model_file='model.npz',
          saveto='model.npz',
          reload_model=False,
@@ -71,6 +102,7 @@ def main(model_file='model.npz',
          save_freq=5000,
          valid_frac=0.2,
          test_frac=0.2,
+         marge=1.0,
          params=None):
     # Load the dataset
     print("Loading data...")
@@ -108,6 +140,7 @@ def main(model_file='model.npz',
     valid_triples = valid_dataset.generate_batch(batch_size=int(valid_frac * valid_dataset.n_triples))[0].astype(np.int32)
     # valid_triples = train_dataset.generate_batch(batch_size=num_train)[0].astype(np.int32)
     test_triples = test_dataset.generate_batch(batch_size=int(test_frac * test_dataset.n_triples))[0].astype(np.int32)
+    sr_index = build_sub_rel_index(train_dataset.triples, valid_dataset.triples, test_dataset.triples)
 
     n_entities = train_dataset.n_entities
     n_relations = train_dataset.n_relations
@@ -118,17 +151,18 @@ def main(model_file='model.npz',
     params_init = None
     if reload_model:
         params_init = load_params(model_file)
-    model = models.Model2(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    # model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    # model = models.Model2(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
     # model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    train_fn = model.train_fn(learning_rate, marge=1.0)
+    train_fn = model.train_fn(learning_rate, marge=marge)
     ranks_fn = model.ranks_fn()
+    scores_fn = model.scores_fn()
 
     uidx = 0
     best_p = None
     history_valid = []
     history_test = []
-    bins = [1, 11, 101, 1001, 10001, 20000]
+    bins = [1, 11, 21, 31, 51, 101, 1001, 10001, 20000]
     print("Training on %d triples" % len(train_triples))
     print("The eval is being printed with number of items the bins -> %s" % bins)
     try:
@@ -169,17 +203,28 @@ def main(model_file='model.npz',
                     print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
 
                 if uidx % valid_freq == 0:
-                    train_ranks = ranks_fn(tmb)[0]
-                    valid_ranks = ranks_fn(valid_triples)[0]
-                    test_ranks = ranks_fn(test_triples)[0]
+                    # train_ranks = ranks_fn(tmb)[0]
+                    # valid_ranks = ranks_fn(valid_triples)[0]
+                    # test_ranks = ranks_fn(test_triples)[0]
+                    train_ranks = get_ranks(scores_fn(tmb)[0], tmb[:, 2])
+                    valid_scores = scores_fn(valid_triples)[0]
+                    test_scores = scores_fn(test_triples)[0]
+                    valid_ranks = get_ranks(valid_scores, valid_triples[:, 2])
+                    test_ranks = get_ranks(test_scores, test_triples[:, 2])
+                    valid_disc_ranks = get_discounted_ranks(valid_scores, valid_triples, sr_index)
+                    test_disc_ranks = get_discounted_ranks(test_scores, test_triples, sr_index)
 
                     train_err = np.mean(train_ranks)
                     valid_err = np.mean(valid_ranks)
                     test_err = np.mean(test_ranks)
+                    valid_disc_err = np.mean(valid_disc_ranks)
+                    test_disc_err = np.mean(test_disc_ranks)
 
                     train_hits10 = float((train_ranks <= 10).astype('float32').sum()) / train_ranks.shape[0]
                     valid_hits10 = float((valid_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
                     test_hits10 = float((test_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
+                    valid_disc_hits10 = float((valid_disc_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
+                    test_disc_hits10 = float((test_disc_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
 
                     train_dist = np.histogram(train_ranks, bins)
                     valid_dist = np.histogram(valid_ranks, bins)
@@ -190,6 +235,8 @@ def main(model_file='model.npz',
                         epoch + 1, num_epochs, uidx, time.time() - start_time))
                     print("  mean training triples rank: %f" % train_err)
                     print("  mean validation triples rank: %f" % valid_err)
+                    print("  mean validation triples discounted rank: %f" % valid_disc_err)
+                    print("  mean test triples discounted rank: %f" % test_disc_err)
                     print("  mean test triples rank: %f" % test_err)
                     print("  training triples rank dist: %s" % train_dist[0])
                     print("  validation triples rank dist: %s" % valid_dist[0])
@@ -197,6 +244,8 @@ def main(model_file='model.npz',
                     print("  training triples hits@10: %s" % train_hits10)
                     print("  validation triples hits@10: %s" % valid_hits10)
                     print("  test triples hits@10: %s" % test_hits10)
+                    print("  validation triples discounted hits@10: %s" % valid_disc_hits10)
+                    print("  test triples discounted hits@10: %s" % test_disc_hits10)
 
                     if (best_p is None) or (len(history_valid) > 0 and valid_hits10 >= np.max(history_valid)):
                         print("found best params yet")
@@ -226,17 +275,23 @@ def main(model_file='model.npz',
     # print("Evaluating on all training data")
     # for _, train_index in get_minibatches_idx(len(train_triples), batch_size, False):
     #     train_ranks += list(ranks_fn(train_triples[train_index])[0])
-    valid_ranks = ranks_fn(valid_triples)
-    test_ranks = ranks_fn(test_triples)
+    valid_ranks = ranks_fn(valid_triples)[0]
+    test_ranks = ranks_fn(test_triples)[0]
 
     train_err = np.mean(train_ranks)
     valid_err = np.mean(valid_ranks)
     test_err = np.mean(test_ranks)
 
+    valid_hits10 = float((valid_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
+    test_hits10 = float((test_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
+
     print("\nresults after training")
     # print("  mean training triples rank: %f" % train_err)
     print("  mean validation triples rank: %f" % valid_err)
     print("  mean test triples rank: %f" % test_err)
+
+    print("  validation triples hits@10: %s" % valid_hits10)
+    print("  test triples hits@10: %s" % test_hits10)
 
     # return all stuff needed for debugging
     return model, train_ranks, valid_ranks
@@ -245,28 +300,35 @@ def main(model_file='model.npz',
 if __name__ == '__main__':
     rng = np.random
     # server model
-    model, train_ranks, valid_ranks = main(model_file='model2_150epochs_noreg.npz',
-                 saveto='model2_150epochs_noreg',
-                 reload_model=False,
-                 num_epochs=150,
-                 full_train=True,
-                 valid_freq=10000,
-                 disp_freq=1000,
-                 save_freq=20000,
-                 valid_frac=1.0,
-                 test_frac=1.0,
-                 L1_reg=0.0,
-                 L2_reg=0.0,
-                 is_normalized=True
+    model, train_ranks, valid_ranks = main(model_file='model2+3_150epochs_noreg.npz',
+                                            saveto='model2+3_150epochs_noreg',
+                                            reload_model=True,
+                                            num_epochs=150,
+                                            full_train=True,
+                                            valid_freq=10000,
+                                            disp_freq=1000,
+                                            save_freq=20000,
+                                            valid_frac=1.0,
+                                            test_frac=1.0,
+                                            L1_reg=0.0,
+                                            L2_reg=0.0,
+                                            is_normalized=True,
+                                            marge=1.0
                  )
     # local model
-    # ranks = main(model_file='model2+3test.npz',
-    #              saveto='model2+3test',
+    # ranks = main(model_file='model2test.npz',
+    #              saveto='model2test',
     #              reload_model=False,
-    #              num_epochs=10,
-    #              num_train=5000,
+    #              num_epochs=50,
+    #              num_train=10000,
     #              valid_freq=200,
     #              disp_freq=20,
     #              save_freq=1000,
-    #              valid_frac=1.0,
-    #              test_frac=1.0)
+    #              valid_frac=0.3,
+    #              test_frac=0.3,
+    #              L1_reg=0.0,
+    #              L2_reg=0.0,
+    #              is_normalized=True,
+    #              marge=2.0,
+    #              learning_rate=0.01
+    #              )

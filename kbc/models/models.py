@@ -159,6 +159,10 @@ class Model3(Model):
         scores = T.dot( (e_embedding.E[e_ss]*r_embedding.E[rs]), e_embedding.E.T )
         return scores
 
+    def scores_fn(self):
+        in_triples = T.imatrix()
+        return theano.function([in_triples], [self.all_ent_scores(in_triples)])
+
     def ranks_fn(self):
         in_triples = T.imatrix()
         e_ss = in_triples[:, 0]
@@ -247,6 +251,10 @@ class Model2(Model):
         scores = T.dot( (rr_embedding.E[rs]), e_embedding.E.T )
         return scores
 
+    def scores_fn(self):
+        in_triples = T.imatrix()
+        return theano.function([in_triples], [self.all_ent_scores(in_triples)])
+
     def ranks_fn(self):
         in_triples = T.imatrix()
         e_ss = in_triples[:, 0]
@@ -292,6 +300,11 @@ class Model2plus3(Model):
     def normalize(self):
         self.model2.normalize()
         self.model3.normalize()
+
+    def scores_fn(self):
+        in_triples = T.imatrix()
+        scores = self.model2.all_ent_scores(in_triples) + self.model3.all_ent_scores(in_triples)
+        return theano.function([in_triples], [scores])
 
     def ranks_fn(self):
         in_triples = T.imatrix()
