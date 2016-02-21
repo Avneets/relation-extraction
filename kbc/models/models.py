@@ -36,7 +36,7 @@ def margin_cost(pos, neg, marge=1.0):
     :return: sum_i max(neg[i] - pos[i] + marge, 0) - margin based error function
     """
     out = neg - pos + marge
-    return T.sum(out * (out > 0)), out > 0
+    return T.sum(out * (out > 0))
 
 
 def get_L1(W):
@@ -68,7 +68,7 @@ def parse_embeddings(embeddings):
 class Embeddings(object):
     """ Class for the embeddings matrix. """
 
-    def __init__(self, rng, N, D, tag='', W_init=None):
+    def __init__(self, rng, N, D, tag='', W_init=None, init_normalize=True):
         """
         Constructor
 
@@ -83,8 +83,9 @@ class Embeddings(object):
         if W_init is None:
             wbound = np.sqrt(6. / D)
             W_values = rng.uniform(low=-wbound, high=wbound, size=(N, D))
-            W_norm = np.sqrt(np.sum(W_values ** 2, axis=1)).reshape((N, 1))
-            W_values = W_values / W_norm
+            if init_normalize:
+                W_norm = np.sqrt(np.sum(W_values ** 2, axis=1)).reshape((N, 1))
+                W_values = W_values / W_norm
         else:
             W_values = W_init
         self.E = theano.shared(value=W_values, name='E' + tag)
@@ -101,13 +102,16 @@ class Model(object):
 
 class Model3(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
         self.n_entities = n_entities
         self.n_relations = n_relations
         self.n_dim = n_dim
+        self.is_normalized = is_normalized
+        self.L1_reg = L1_reg
+        self.L2_reg = L2_reg
 
         self.e_embedding_tag = 'model3-ent'
         self.r_embedding_tag = 'model3-rel'
@@ -117,8 +121,8 @@ class Model3(Model):
         if params is not None:
             e_embedding_init = params[self.e_embedding_tag]
             r_embedding_init = params[self.r_embedding_tag]
-        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init)
-        self.r_embedding = Embeddings(self.rng, n_relations, n_dim, self.r_embedding_tag, r_embedding_init)
+        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init, is_normalized)
+        self.r_embedding = Embeddings(self.rng, n_relations, n_dim, self.r_embedding_tag, r_embedding_init, is_normalized)
         self.embeddings = [self.e_embedding, self.r_embedding]
 
     def normalize(self):
@@ -138,8 +142,15 @@ class Model3(Model):
         pos = T.sum(e_embedding.E[e_ss] * r_embedding.E[rs] * e_embedding.E[e_os], axis=1)
         neg = T.sum(e_embedding.E[e_ssn] * r_embedding.E[rsn] * e_embedding.E[e_osn], axis=1)
 
-        cost, out = margin_cost(pos, neg, marge)
-        return cost, out
+        cost = margin_cost(pos, neg, marge)
+        if self.L1_reg > 0.:
+            for embedding in self.embeddings:
+                cost += self.L1_reg * get_L1(embedding.E)
+        if self.L2_reg > 0.:
+            for embedding in self.embeddings:
+                cost += self.L2_reg * get_L2(embedding.E)
+
+        return cost
 
     def all_ent_scores(self, in_triples):
         e_ss = in_triples[:, 0]
@@ -166,24 +177,26 @@ class Model3(Model):
         pos_triples = T.imatrix()
         neg_triples = T.imatrix()
 
-        cost, out = self.cost(pos_triples, neg_triples, marge)
+        cost = self.cost(pos_triples, neg_triples, marge)
         params = [self.embeddings[0].E, self.embeddings[1].E]
         # updates = lasagne.updates.sgd(cost, params, lrate)
         updates = lasagne.updates.adagrad(cost, params, lrate) # way faster convergence
         # updates = lasagne.updates.sgd(cost, params, lrate) # slow like sgd (probably slower)
 
-        return theano.function([pos_triples, neg_triples], [cost, out], updates=updates)
+        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
 
 
 class Model2(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
         self.n_entities = n_entities
         self.n_relations = n_relations
         self.n_dim = n_dim
+        self.L1_reg = L1_reg
+        self.L2_reg = L2_reg
 
         self.e_embedding_tag = 'model2-ent'
         self.rl_embedding_tag = 'model2-rell'
@@ -197,9 +210,9 @@ class Model2(Model):
             rl_embedding_init = params[self.rl_embedding_tag]
             rr_embedding_init = params[self.rr_embedding_tag]
 
-        self.rl_embedding = Embeddings(self.rng, n_relations, n_dim, self.rl_embedding_tag, rl_embedding_init)
-        self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, self.rr_embedding_tag, rr_embedding_init)
-        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init)
+        self.rl_embedding = Embeddings(self.rng, n_relations, n_dim, self.rl_embedding_tag, rl_embedding_init, is_normalized)
+        self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, self.rr_embedding_tag, rr_embedding_init, is_normalized)
+        self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init, is_normalized)
         self.embeddings = [self.e_embedding, self.rl_embedding, self.rr_embedding]
 
     def normalize(self):
@@ -219,8 +232,14 @@ class Model2(Model):
         pos = T.sum(e_embedding.E[e_ss] * rl_embedding.E[rs], axis=1) + T.sum(rr_embedding.E[rs] * e_embedding.E[e_os], axis=1)
         neg = T.sum(e_embedding.E[e_ssn] * rl_embedding.E[rsn], axis=1) + T.sum(rr_embedding.E[rsn] * e_embedding.E[e_osn], axis=1)
 
-        cost, out = margin_cost(pos, neg, marge)
-        return cost, out
+        cost = margin_cost(pos, neg, marge)
+        if self.L1_reg > 0.:
+            for embedding in self.embeddings:
+                cost += self.L1_reg * get_L1(embedding.E)
+        if self.L2_reg > 0.:
+            for embedding in self.embeddings:
+                cost += self.L2_reg * get_L2(embedding.E)
+        return cost
 
     def all_ent_scores(self, in_triples):
         rs = in_triples[:, 1]
@@ -246,25 +265,27 @@ class Model2(Model):
         pos_triples = T.imatrix()
         neg_triples = T.imatrix()
 
-        cost, out = self.cost(pos_triples, neg_triples, marge)
+        cost = self.cost(pos_triples, neg_triples, marge)
         params = [self.embeddings[0].E, self.embeddings[1].E, self.embeddings[2].E]
         updates = lasagne.updates.adagrad(cost, params, lrate)
 
-        return theano.function([pos_triples, neg_triples], [cost, out], updates=updates)
+        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
 
 
 class Model2plus3(Model):
 
-    def __init__(self, n_entities, n_relations, n_dim=10, params=None):
+    def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
         self.n_entities = n_entities
         self.n_relations = n_relations
         self.n_dim = n_dim
+        self.L1_reg = L1_reg
+        self.L2_reg = L2_reg
 
-        self.model2 = Model2(n_entities, n_relations, n_dim, params)
-        self.model3 = Model3(n_entities, n_relations, n_dim, params)
+        self.model2 = Model2(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
+        self.model3 = Model3(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
 
         self.embeddings = self.model2.embeddings + self.model3.embeddings
 
@@ -290,13 +311,13 @@ class Model2plus3(Model):
         pos_triples = T.imatrix()
         neg_triples = T.imatrix()
 
-        cost2, out2 = self.model2.cost(pos_triples, neg_triples, marge)
-        cost3, out3 = self.model3.cost(pos_triples, neg_triples, marge)
+        cost2 = self.model2.cost(pos_triples, neg_triples, marge)
+        cost3 = self.model3.cost(pos_triples, neg_triples, marge)
         cost = cost2 + cost3
         params = [embedding.E for embedding in self.embeddings]
         updates = lasagne.updates.adagrad(cost, params, lrate)
 
-        return theano.function([pos_triples, neg_triples], [cost, out2, out3], updates=updates)
+        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
 
 
 if __name__ == "__main__":

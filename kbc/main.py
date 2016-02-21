@@ -63,6 +63,7 @@ def main(model_file='model.npz',
          dim_emb=50,
          L1_reg=0.0,
          L2_reg=0.0,
+         is_normalized=True,
          learning_rate=0.01,
          batch_size=128,
          valid_freq=1000,
@@ -117,7 +118,9 @@ def main(model_file='model.npz',
     params_init = None
     if reload_model:
         params_init = load_params(model_file)
-    model = models.Model3(n_entities, n_relations, dim_emb, params_init)
+    model = models.Model2(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    # model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    # model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
     train_fn = model.train_fn(learning_rate, marge=1.0)
     ranks_fn = model.ranks_fn()
 
@@ -137,7 +140,8 @@ def main(model_file='model.npz',
             start_time = time.time()
             for _, train_index in get_minibatches_idx(len(train_triples), batch_size, False):
                 # Normalize the entity embeddings
-                model.normalize()
+                if is_normalized:
+                    model.normalize()
 
                 tmb = train_triples[train_index]
 
@@ -235,19 +239,34 @@ def main(model_file='model.npz',
     print("  mean test triples rank: %f" % test_err)
 
     # return all stuff needed for debugging
-    return train_ranks, valid_ranks
+    return model, train_ranks, valid_ranks
 
 
 if __name__ == '__main__':
     rng = np.random
-    ranks = main(model_file='model3.npz',
-                 saveto='model3.npz',
+    # server model
+    model, train_ranks, valid_ranks = main(model_file='model2_150epochs_noreg.npz',
+                 saveto='model2_150epochs_noreg',
                  reload_model=False,
                  num_epochs=150,
-                 # num_train=5000,
                  full_train=True,
                  valid_freq=10000,
                  disp_freq=1000,
                  save_freq=20000,
                  valid_frac=1.0,
-                 test_frac=1.0)
+                 test_frac=1.0,
+                 L1_reg=0.0,
+                 L2_reg=0.0,
+                 is_normalized=True
+                 )
+    # local model
+    # ranks = main(model_file='model2+3test.npz',
+    #              saveto='model2+3test',
+    #              reload_model=False,
+    #              num_epochs=10,
+    #              num_train=5000,
+    #              valid_freq=200,
+    #              disp_freq=20,
+    #              save_freq=1000,
+    #              valid_frac=1.0,
+    #              test_frac=1.0)
