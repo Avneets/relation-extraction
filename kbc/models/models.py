@@ -61,6 +61,43 @@ def parse_embeddings(embeddings):
     else:
         print("couldn't read the embeddings")
         exit()
+
+
+def batch_marge_cost(score_batch, pos_triples, neg_entities_list, is_subject=True, marge=1.0, L1_reg=0., L2_reg=0.):
+    e_ss = pos_triples[:, 0]
+    rs = pos_triples[:, 1]
+    e_os = pos_triples[:, 2]
+
+    cost = 0
+
+    if is_subject:
+        for e_ssn in neg_entities_list:
+            pos = score_batch(e_ss, rs, e_os)
+            neg = score_batch(e_ssn, rs, e_os)
+            cost += margin_cost(pos, neg, marge)
+    else:
+        for e_osn in neg_entities_list:
+            pos = score_batch(e_ss, rs, e_os)
+            neg = score_batch(e_ss, rs, e_osn)
+            cost += margin_cost(pos, neg, marge)
+
+    return cost
+
+
+def train_fn(cost_fns, params, num_neg=10, lrate=0.01, marge=1.0):
+        pos_triples = T.imatrix()
+        sub_neg_entities_list = [T.ivector() for i in xrange(num_neg)]
+        obj_neg_entities_list = [T.ivector() for i in xrange(num_neg)]
+
+        cost_sub = 0
+        cost_obj = 0
+        for cost_fn in cost_fns:
+            cost_sub += cost_fn(pos_triples, sub_neg_entities_list, True, marge)
+            cost_obj += cost_fn(pos_triples, obj_neg_entities_list, False, marge)
+        cost = cost_sub + cost_obj
+        updates = lasagne.updates.adagrad(cost, params, lrate)
+
+        return theano.function([pos_triples] + sub_neg_entities_list + obj_neg_entities_list, [cost], updates=updates)
 # ----------------------------------------------------------------------------
 
 
@@ -128,21 +165,13 @@ class Model3(Model):
     def normalize(self):
         self.e_embedding.normalize()
 
-    def cost(self, pos_triples, neg_triples, marge=1.0):
-        e_ss = pos_triples[:, 0]
-        rs = pos_triples[:, 1]
-        e_os = pos_triples[:, 2]
-
-        e_ssn = neg_triples[:, 0]
-        rsn = neg_triples[:, 1]
-        e_osn = neg_triples[:, 2]
-
+    def score_batch(self, e_ss, rs, e_os):
         e_embedding, r_embedding = self.embeddings
+        return T.sum(e_embedding.E[e_ss] * r_embedding.E[rs] * e_embedding.E[e_os], axis=1)
 
-        pos = T.sum(e_embedding.E[e_ss] * r_embedding.E[rs] * e_embedding.E[e_os], axis=1)
-        neg = T.sum(e_embedding.E[e_ssn] * r_embedding.E[rsn] * e_embedding.E[e_osn], axis=1)
+    def cost(self, pos_triples, neg_entities_list, is_subject=True, marge=1.0):
+        cost = batch_marge_cost(self.score_batch, pos_triples, neg_entities_list, is_subject, marge)
 
-        cost = margin_cost(pos, neg, marge)
         if self.L1_reg > 0.:
             for embedding in self.embeddings:
                 cost += self.L1_reg * get_L1(embedding.E)
@@ -151,6 +180,10 @@ class Model3(Model):
                 cost += self.L2_reg * get_L2(embedding.E)
 
         return cost
+
+    def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
+        params = [self.embeddings[0].E, self.embeddings[1].E]
+        return train_fn([self.cost], params, num_neg, lrate, marge)
 
     def all_ent_scores(self, in_triples):
         e_ss = in_triples[:, 0]
@@ -176,18 +209,6 @@ class Model3(Model):
         ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
         return theano.function([in_triples], [ranks_os])
-
-    def train_fn(self, lrate=0.01, marge=1.0):
-        pos_triples = T.imatrix()
-        neg_triples = T.imatrix()
-
-        cost = self.cost(pos_triples, neg_triples, marge)
-        params = [self.embeddings[0].E, self.embeddings[1].E]
-        # updates = lasagne.updates.sgd(cost, params, lrate)
-        updates = lasagne.updates.adagrad(cost, params, lrate) # way faster convergence
-        # updates = lasagne.updates.sgd(cost, params, lrate) # slow like sgd (probably slower)
-
-        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
 
 
 class Model2(Model):
@@ -222,21 +243,12 @@ class Model2(Model):
     def normalize(self):
         self.e_embedding.normalize()
 
-    def cost(self, pos_triples, neg_triples, marge=1.0):
-        e_ss = pos_triples[:, 0]
-        rs = pos_triples[:, 1]
-        e_os = pos_triples[:, 2]
-
-        e_ssn = neg_triples[:, 0]
-        rsn = neg_triples[:, 1]
-        e_osn = neg_triples[:, 2]
-
+    def score_batch(self, e_ss, rs, e_os):
         e_embedding, rl_embedding, rr_embedding = self.embeddings
+        return T.sum(e_embedding.E[e_ss] * rl_embedding.E[rs], axis=1) + T.sum(rr_embedding.E[rs] * e_embedding.E[e_os], axis=1)
 
-        pos = T.sum(e_embedding.E[e_ss] * rl_embedding.E[rs], axis=1) + T.sum(rr_embedding.E[rs] * e_embedding.E[e_os], axis=1)
-        neg = T.sum(e_embedding.E[e_ssn] * rl_embedding.E[rsn], axis=1) + T.sum(rr_embedding.E[rsn] * e_embedding.E[e_osn], axis=1)
-
-        cost = margin_cost(pos, neg, marge)
+    def cost(self, pos_triples, neg_entities_list, is_subject=True, marge=1.0):
+        cost = batch_marge_cost(self.score_batch, pos_triples, neg_entities_list, is_subject, marge)
         if self.L1_reg > 0.:
             for embedding in self.embeddings:
                 cost += self.L1_reg * get_L1(embedding.E)
@@ -244,6 +256,10 @@ class Model2(Model):
             for embedding in self.embeddings:
                 cost += self.L2_reg * get_L2(embedding.E)
         return cost
+
+    def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
+        params = [self.embeddings[0].E, self.embeddings[1].E, self.embeddings[2].E]
+        return train_fn([self.cost], params, num_neg, lrate, marge)
 
     def all_ent_scores(self, in_triples):
         rs = in_triples[:, 1]
@@ -268,16 +284,6 @@ class Model2(Model):
         ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
         return theano.function([in_triples], [ranks_os])
-
-    def train_fn(self, lrate=0.01, marge=1.0):
-        pos_triples = T.imatrix()
-        neg_triples = T.imatrix()
-
-        cost = self.cost(pos_triples, neg_triples, marge)
-        params = [self.embeddings[0].E, self.embeddings[1].E, self.embeddings[2].E]
-        updates = lasagne.updates.adagrad(cost, params, lrate)
-
-        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
 
 
 class Model2plus3(Model):
@@ -320,17 +326,9 @@ class Model2plus3(Model):
 
         return theano.function([in_triples], [ranks_os])
 
-    def train_fn(self, lrate=0.01, marge=1.0):
-        pos_triples = T.imatrix()
-        neg_triples = T.imatrix()
-
-        cost2 = self.model2.cost(pos_triples, neg_triples, marge)
-        cost3 = self.model3.cost(pos_triples, neg_triples, marge)
-        cost = cost2 + cost3
+    def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
         params = [embedding.E for embedding in self.embeddings]
-        updates = lasagne.updates.adagrad(cost, params, lrate)
-
-        return theano.function([pos_triples, neg_triples], [cost], updates=updates)
+        return train_fn([self.model2.cost, self.model3.cost], params, num_neg, lrate, marge)
 
 
 if __name__ == "__main__":

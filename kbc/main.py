@@ -103,6 +103,7 @@ def main(model_file='model.npz',
          valid_frac=0.2,
          test_frac=0.2,
          marge=1.0,
+         num_neg=1,
          params=None):
     # Load the dataset
     print("Loading data...")
@@ -152,9 +153,9 @@ def main(model_file='model.npz',
     if reload_model:
         params_init = load_params(model_file)
     # model = models.Model2(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    # model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    train_fn = model.train_fn(learning_rate, marge=marge)
+    model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    # model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    train_fn = model.train_fn(num_neg=num_neg, lrate=learning_rate, marge=marge)
     ranks_fn = model.ranks_fn()
     scores_fn = model.scores_fn()
 
@@ -180,19 +181,13 @@ def main(model_file='model.npz',
                 tmb = train_triples[train_index]
 
                 # generating negative examples replacing left entity
-                tmbln = np.empty(tmb.shape, dtype=tmb.dtype)
-                tmbln[:, [1, 2]] = tmb[:, [1, 2]]
-                tmbln[:, 0] = rng.randint(0, n_entities, tmb.shape[0])
+                tmbln_list = [rng.randint(0, n_entities, tmb.shape[0]).astype(dtype=tmb.dtype) for i in xrange(num_neg)]
 
                 # generating negative examples replacing right entity
-                tmbrn = np.empty(tmb.shape, dtype=tmb.dtype)
-                tmbrn[:, [0, 1]] = tmb[:, [0, 1]]
-                tmbrn[:, 2] = rng.randint(0, n_entities, tmb.shape[0])
+                tmbrn_list = [rng.randint(0, n_entities, tmb.shape[0]).astype(dtype=tmb.dtype) for i in xrange(num_neg)]
 
-                costl = train_fn(tmb, tmbln)[0]
-                costr = train_fn(tmb, tmbrn)[0]
-
-                cost = costl + costr
+                cost_test = train_fn(*([tmb] + tmbln_list + tmbrn_list))[0]
+                cost = cost_test
 
                 # print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
 
@@ -301,37 +296,39 @@ def main(model_file='model.npz',
 if __name__ == '__main__':
     rng = np.random
     # server model
-    model, train_ranks, valid_ranks = main(model_file='model3_150epochs_reg_disc_rate0.1_emb10.npz',
-                                           saveto='model3_150epochs_reg_disc_rate0.1_emb10',
-                                           reload_model=False,
-                                           num_epochs=150,
-                                           full_train=True,
-                                           valid_freq=10000,
-                                           disp_freq=1000,
-                                           save_freq=20000,
-                                           valid_frac=1.0,
-                                           test_frac=1.0,
-                                           L1_reg=0.0,
-                                           L2_reg=0.001,
-                                           is_normalized=False,
-                                           marge=1.0,
-                                           learning_rate=0.1,
-                                           dim_emb=10
-                 )
-    # local model
-    # ranks = main(model_file='model2test.npz',
-    #              saveto='model2test',
-    #              reload_model=False,
-    #              num_epochs=50,
-    #              num_train=10000,
-    #              valid_freq=200,
-    #              disp_freq=20,
-    #              save_freq=1000,
-    #              valid_frac=0.3,
-    #              test_frac=0.3,
-    #              L1_reg=0.0,
-    #              L2_reg=0.0,
-    #              is_normalized=True,
-    #              marge=2.0,
-    #              learning_rate=0.01
+    # model, train_ranks, valid_ranks = main(model_file='model3_150epochs_reg_disc_rate0.1_emb10.npz',
+    #                                        saveto='model3_150epochs_reg_disc_rate0.1_emb10',
+    #                                        reload_model=False,
+    #                                        num_epochs=150,
+    #                                        full_train=True,
+    #                                        valid_freq=10000,
+    #                                        disp_freq=1000,
+    #                                        save_freq=20000,
+    #                                        valid_frac=1.0,
+    #                                        test_frac=1.0,
+    #                                        L1_reg=0.0,
+    #                                        L2_reg=0.001,
+    #                                        is_normalized=False,
+    #                                        marge=1.0,
+    #                                        learning_rate=0.1,
+    #                                        dim_emb=10
     #              )
+    # local model
+    ranks = main(model_file='model2test.npz',
+                 saveto='model2test',
+                 reload_model=False,
+                 num_epochs=50,
+                 num_train=1000,
+                 valid_freq=200,
+                 disp_freq=20,
+                 save_freq=1000,
+                 valid_frac=0.1,
+                 test_frac=0.1,
+                 L1_reg=0.0,
+                 L2_reg=0.0,
+                 is_normalized=True,
+                 marge=2.0,
+                 learning_rate=0.01,
+                 num_neg=10,
+                 batch_size=512
+                 )
