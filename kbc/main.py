@@ -79,7 +79,7 @@ def get_discounted_ranks(scores, in_triples, sr_index):
     ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
     competing_indices = [ sr_index[tuple(sr_pair)] for sr_pair in in_triples[:, :2] ]
-    competing_scores = np.array([ np.sum(scores[index, competing_list] >= e_os_scores[index]) for index, competing_list in enumerate(competing_indices) ])
+    competing_scores = np.array([ np.sum(scores[index, competing_list] > e_os_scores[index]) for index, competing_list in enumerate(competing_indices) ])
 
     ranks_os = ranks_os - competing_scores
     return ranks_os
@@ -152,13 +152,13 @@ def main(model_file='model.npz',
     if reload_model:
         params_init = load_params(model_file)
     # model = models.Model2(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
-    # model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    # model = models.Model2plus3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
+    model = models.Model3(n_entities, n_relations, dim_emb, params_init, is_normalized=is_normalized, L1_reg=L1_reg, L2_reg=L2_reg)
     train_fn = model.train_fn(learning_rate, marge=marge)
     ranks_fn = model.ranks_fn()
     scores_fn = model.scores_fn()
 
-    uidx = 0
+    uidx = 1
     best_p = None
     history_valid = []
     history_test = []
@@ -184,6 +184,7 @@ def main(model_file='model.npz',
                 tmbln[:, [1, 2]] = tmb[:, [1, 2]]
                 tmbln[:, 0] = rng.randint(0, n_entities, tmb.shape[0])
 
+                # generating negative examples replacing right entity
                 tmbrn = np.empty(tmb.shape, dtype=tmb.dtype)
                 tmbrn[:, [0, 1]] = tmb[:, [0, 1]]
                 tmbrn[:, 2] = rng.randint(0, n_entities, tmb.shape[0])
@@ -300,20 +301,22 @@ def main(model_file='model.npz',
 if __name__ == '__main__':
     rng = np.random
     # server model
-    model, train_ranks, valid_ranks = main(model_file='model2+3_150epochs_noreg.npz',
-                                            saveto='model2+3_150epochs_noreg',
-                                            reload_model=True,
-                                            num_epochs=150,
-                                            full_train=True,
-                                            valid_freq=10000,
-                                            disp_freq=1000,
-                                            save_freq=20000,
-                                            valid_frac=1.0,
-                                            test_frac=1.0,
-                                            L1_reg=0.0,
-                                            L2_reg=0.0,
-                                            is_normalized=True,
-                                            marge=1.0
+    model, train_ranks, valid_ranks = main(model_file='model3_150epochs_reg_disc_rate0.1_emb10.npz',
+                                           saveto='model3_150epochs_reg_disc_rate0.1_emb10',
+                                           reload_model=False,
+                                           num_epochs=150,
+                                           full_train=True,
+                                           valid_freq=10000,
+                                           disp_freq=1000,
+                                           save_freq=20000,
+                                           valid_frac=1.0,
+                                           test_frac=1.0,
+                                           L1_reg=0.0,
+                                           L2_reg=0.001,
+                                           is_normalized=False,
+                                           marge=1.0,
+                                           learning_rate=0.1,
+                                           dim_emb=10
                  )
     # local model
     # ranks = main(model_file='model2test.npz',
