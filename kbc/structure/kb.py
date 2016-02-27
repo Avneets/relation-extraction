@@ -84,9 +84,9 @@ class KB(object):
 
         if batch_size < 0: batch_size = self.n_triples
         batch_size = min(batch_size, self.n_triples)
-        triples = np.zeros((batch_size, 3)).astype(theano.config.floatX)
+        triples = np.zeros((batch_size, 3)).astype(config.floatX)
         for i in xrange(batch_size):
             i_range = (i + self.batch_index) % self.n_triples
-            triples[i] = np.asarray(list(self.triples[i_range]), dtype=theano.config.floatX)
+            triples[i] = np.asarray(list(self.triples[i_range]), dtype=config.floatX)
         self.batch_index = (self.batch_index + batch_size) % self.n_triples
         return (triples,)

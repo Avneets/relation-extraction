@@ -63,7 +63,7 @@ def parse_embeddings(embeddings):
         exit()
 
 
-def batch_marge_cost(score_batch, pos_triples, neg_entities_list, is_subject=True, marge=1.0, L1_reg=0., L2_reg=0.):
+def batch_marge_cost(score_batch, pos_triples, neg_entities_list, is_subject=True, marge=1.0):
     e_ss = pos_triples[:, 0]
     rs = pos_triples[:, 1]
     e_os = pos_triples[:, 2]
@@ -101,6 +101,17 @@ def train_fn(cost_fns, params, num_neg=10, lrate=0.01, marge=1.0):
 # ----------------------------------------------------------------------------
 
 
+# Model utility functions -----------------------------------------------------------
+
+def get_embeddings_dict(model):
+    embeddings_dict = OrderedDict()
+    for embedding in model.embeddings:
+        embeddings_dict[embedding.tag] = embedding.E
+    return embeddings_dict
+
+# --------------------------------------------------------------------------------------
+
+
 # Embeddings class -----------------------------------------------------------
 class Embeddings(object):
     """ Class for the embeddings matrix. """
@@ -125,7 +136,7 @@ class Embeddings(object):
                 W_values = W_values / W_norm
         else:
             W_values = W_init
-        self.E = theano.shared(value=W_values, name='E' + tag)
+        self.E = theano.shared(value=W_values, name=tag)
         # Define a normalization function with respect to the L_2 norm of the
         # embedding vectors.
         self.updates = OrderedDict({self.E: self.E / T.sqrt(T.sum(self.E ** 2, axis=1)).reshape((N, 1))})
@@ -161,6 +172,7 @@ class Model3(Model):
         self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init, is_normalized)
         self.r_embedding = Embeddings(self.rng, n_relations, n_dim, self.r_embedding_tag, r_embedding_init, is_normalized)
         self.embeddings = [self.e_embedding, self.r_embedding]
+        self.all_params_dict = get_embeddings_dict(self)
 
     def normalize(self):
         self.e_embedding.normalize()
@@ -239,6 +251,7 @@ class Model2(Model):
         self.rr_embedding = Embeddings(self.rng, n_relations, n_dim, self.rr_embedding_tag, rr_embedding_init, is_normalized)
         self.e_embedding = Embeddings(self.rng, n_entities, n_dim, self.e_embedding_tag, e_embedding_init, is_normalized)
         self.embeddings = [self.e_embedding, self.rl_embedding, self.rr_embedding]
+        self.all_params_dict = get_embeddings_dict(self)
 
     def normalize(self):
         self.e_embedding.normalize()
@@ -302,6 +315,7 @@ class Model2plus3(Model):
         self.model3 = Model3(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
 
         self.embeddings = self.model2.embeddings + self.model3.embeddings
+        self.all_params_dict = get_embeddings_dict(self)
 
     def normalize(self):
         self.model2.normalize()
