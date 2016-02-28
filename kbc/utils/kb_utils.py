@@ -78,6 +78,43 @@ def get_discounted_ranks(scores, in_triples, sr_index):
     return ranks_os
 
 
+def get_batch_metrics(triples, sr_index, scores_fn, incl_discounting=False):
+    bins = [1, 11, 21, 31, 51, 101, 1001, 10001, 20000]
+
+    scores = scores_fn(triples)[0]
+    ranks = get_ranks(scores, triples[:, 2])
+    mean_rank = np.mean(ranks)
+    hits10 = float((ranks <= 10).sum()) * 100. / ranks.shape[0]
+    dist = np.histogram(ranks, bins)[0]
+    dist_percent = dist.astype(dtype=config.floatX) * (100. / ranks.shape[0])
+
+    print("    mean rank: {:.3f}".format(mean_rank))
+    print("    rank dist: {!s}".format(dist))
+    print("    rank dist as %: {!s}".format(dist_percent))
+    print("    hits@10: {:.3f}".format(hits10))
+
+    if incl_discounting:
+        disc_ranks = get_discounted_ranks(scores, triples, sr_index)
+        mean_disc_ranks = np.mean(disc_ranks)
+        disc_hits10 = float((disc_ranks <= 10).sum()) * 100. / ranks.shape[0]
+
+        print("    mean discounted rank: {:.3f}".format(mean_disc_ranks))
+        print("    discounted hits@10: {:.3f}".format(disc_hits10))
+
+        return disc_hits10
+    else:
+        return hits10
+
+
+def get_best_metric(history):
+    if len(history) > 0:
+        best_metric = np.max(history)
+        print("Performance = {:.3f}".format(best_metric))
+        return best_metric
+    else:
+        return None
+
+
 def train(model, train_triples, valid_triples, test_triples, sr_index, params):
     rng = np.random
     n_entities, n_relations = model.n_entities, model.n_relations
@@ -88,18 +125,18 @@ def train(model, train_triples, valid_triples, test_triples, sr_index, params):
 
     uidx = 1
     best_p = None
-    history_valid = []
-    history_test = []
+    history_valid_hits = []
+    history_test_hits = []
+    history_epoch_times = []
     bins = [1, 11, 21, 31, 51, 101, 1001, 10001, 20000]
     print("Training on %d triples" % len(train_triples))
     print("The eval is being printed with number of items the bins -> %s" % bins)
     try:
         # We iterate over epochs:
+        train_start_time = time.time()
         for epoch in range(params[NUM_EPOCHS]):
             # In each epoch, we do a full pass over the training data:
-            train_err = 0
-            train_batches = 0
-            start_time = time.time()
+            epoch_start_time = time.time()
             for _, train_index in utils.get_minibatches_idx(len(train_triples), params[BATCH_SIZE], False):
                 # Normalize the entity embeddings
                 if params[IS_NORMALIZED]:
@@ -113,66 +150,39 @@ def train(model, train_triples, valid_triples, test_triples, sr_index, params):
                 # generating negative examples replacing right entity
                 tmbrn_list = [rng.randint(0, n_entities, tmb.shape[0]).astype(dtype=tmb.dtype) for i in xrange(params[NUM_NEG])]
 
-                cost_test = train_fn(*([tmb] + tmbln_list + tmbrn_list))[0]
-                cost = cost_test
-
-                # print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
+                cost = train_fn(*([tmb] + tmbln_list + tmbrn_list))[0]
 
                 if np.isnan(cost) or np.isinf(cost):
                     print('bad cost detected! Cost is ' + str(cost))
-                    return
+                    return get_best_metric(history_valid_hits)
 
                 if uidx % params[DISP_FREQ] == 0:
                     print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
 
                 if uidx % params[VALID_FREQ] == 0:
-                    train_ranks = get_ranks(scores_fn(tmb)[0], tmb[:, 2])
-                    valid_scores = scores_fn(valid_triples)[0]
-                    test_scores = scores_fn(test_triples)[0]
-                    valid_ranks = get_ranks(valid_scores, valid_triples[:, 2])
-                    test_ranks = get_ranks(test_scores, test_triples[:, 2])
-                    valid_disc_ranks = get_discounted_ranks(valid_scores, valid_triples, sr_index)
-                    test_disc_ranks = get_discounted_ranks(test_scores, test_triples, sr_index)
+                    print('Epoch ', epoch, 'Iter', uidx, 'Cost ', cost)
 
-                    train_err = np.mean(train_ranks)
-                    valid_err = np.mean(valid_ranks)
-                    test_err = np.mean(test_ranks)
-                    valid_disc_err = np.mean(valid_disc_ranks)
-                    test_disc_err = np.mean(test_disc_ranks)
+                    # print("Epoch {} of {} uidx {} took {:.3f}s".format(
+                    #     epoch + 1, params[NUM_EPOCHS], uidx, time.time() - start_time))
+                    if len(history_epoch_times) > 0:
+                        print ("  Average epoch time - {:.3f}s".format(np.mean(history_epoch_times)))
+                    print("  Time since start - {:.3f}s".format(time.time() - train_start_time))
 
-                    train_hits10 = float((train_ranks <= 10).astype('float32').sum()) / train_ranks.shape[0]
-                    valid_hits10 = float((valid_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
-                    test_hits10 = float((test_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
-                    valid_disc_hits10 = float((valid_disc_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
-                    test_disc_hits10 = float((test_disc_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
+                    print("  Train Minibatch Metrics")
+                    train_hits10 = get_batch_metrics(tmb, sr_index, scores_fn, False)
+                    print('')
+                    print("  Validation data Metrics")
+                    valid_hits10 = get_batch_metrics(valid_triples, sr_index, scores_fn, True)
+                    print('')
+                    print("  Test data Metrics")
+                    test_hits10 = get_batch_metrics(test_triples, sr_index, scores_fn, True)
 
-                    train_dist = np.histogram(train_ranks, bins)
-                    valid_dist = np.histogram(valid_ranks, bins)
-                    test_dist = np.histogram(test_ranks, bins)
-
-                    # Then we print the results for this epoch:
-                    print("Epoch {} of {} uidx {} took {:.3f}s".format(
-                        epoch + 1, params[NUM_EPOCHS], uidx, time.time() - start_time))
-                    print("  mean training triples rank: %f" % train_err)
-                    print("  mean validation triples rank: %f" % valid_err)
-                    print("  mean validation triples discounted rank: %f" % valid_disc_err)
-                    print("  mean test triples discounted rank: %f" % test_disc_err)
-                    print("  mean test triples rank: %f" % test_err)
-                    print("  training triples rank dist: %s" % train_dist[0])
-                    print("  validation triples rank dist: %s" % valid_dist[0])
-                    print("  test triples rank dist: %s" % test_dist[0])
-                    print("  training triples hits@10: %s" % train_hits10)
-                    print("  validation triples hits@10: %s" % valid_hits10)
-                    print("  test triples hits@10: %s" % test_hits10)
-                    print("  validation triples discounted hits@10: %s" % valid_disc_hits10)
-                    print("  test triples discounted hits@10: %s" % test_disc_hits10)
-
-                    if (best_p is None) or (len(history_valid) > 0 and valid_hits10 >= np.max(history_valid)):
+                    if (best_p is None) or (len(history_valid_hits) > 0 and valid_hits10 >= np.max(history_valid_hits)):
                         print("found best params yet")
                         best_p = utils.get_params(model)
 
-                    history_valid.append(valid_hits10)
-                    history_test.append(test_hits10)
+                    history_valid_hits.append(valid_hits10)
+                    history_test_hits.append(test_hits10)
 
                 if uidx % params[SAVE_FREQ] == 0:
                     if best_p is None:
@@ -180,32 +190,13 @@ def train(model, train_triples, valid_triples, test_triples, sr_index, params):
                     else:
                         all_params = best_p
 
-                    # utils.save(params[SAVETO_FILE], all_params, params)
                     utils.save(params[SAVETO_FILE], all_params)
 
                 uidx += 1
 
+            history_epoch_times.append(time.time() - epoch_start_time)
+
     except KeyboardInterrupt:
         print("training interrupted")
 
-    valid_ranks = ranks_fn(valid_triples)[0]
-    test_ranks = ranks_fn(test_triples)[0]
-
-    train_err = np.mean(train_ranks)
-    valid_err = np.mean(valid_ranks)
-    test_err = np.mean(test_ranks)
-
-    valid_hits10 = float((valid_ranks <= 10).astype('float32').sum()) / valid_ranks.shape[0]
-    test_hits10 = float((test_ranks <= 10).astype('float32').sum()) / test_ranks.shape[0]
-
-    print("\nresults after training")
-    # print("  mean training triples rank: %f" % train_err)
-    print("  mean validation triples rank: %f" % valid_err)
-    print("  mean test triples rank: %f" % test_err)
-
-    print("  validation triples hits@10: %s" % valid_hits10)
-    print("  test triples hits@10: %s" % test_hits10)
-
-    # return all stuff needed for debugging
-    return model, train_ranks, valid_ranks
-
+    return get_best_metric(history_valid_hits)
