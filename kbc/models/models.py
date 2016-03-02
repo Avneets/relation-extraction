@@ -7,6 +7,9 @@ import theano.tensor as T
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 import lasagne
 
+from kbc.utils import config
+from kbc.utils.params import *
+
 
 # Similarity functions -------------------------------------------------------
 def L1sim(left, right):
@@ -84,7 +87,7 @@ def batch_marge_cost(score_batch, pos_triples, neg_entities_list, is_subject=Tru
     return cost
 
 
-def train_fn(cost_fns, params, num_neg=10, lrate=0.01, marge=1.0):
+def train_fn(cost_fns, params, num_neg=10, lrate=0.01, marge=1.0, name=''):
         pos_triples = T.imatrix()
         sub_neg_entities_list = [T.ivector() for i in xrange(num_neg)]
         obj_neg_entities_list = [T.ivector() for i in xrange(num_neg)]
@@ -97,7 +100,12 @@ def train_fn(cost_fns, params, num_neg=10, lrate=0.01, marge=1.0):
         cost = cost_sub + cost_obj
         updates = lasagne.updates.adagrad(cost, params, lrate)
 
-        return theano.function([pos_triples] + sub_neg_entities_list + obj_neg_entities_list, [cost], updates=updates)
+        return theano.function(
+            [pos_triples] + sub_neg_entities_list + obj_neg_entities_list,
+            [cost],
+            updates=updates,
+            name=name
+        )
 # ----------------------------------------------------------------------------
 
 
@@ -136,11 +144,11 @@ class Embeddings(object):
                 W_values = W_values / W_norm
         else:
             W_values = W_init
-        self.E = theano.shared(value=W_values, name=tag)
+        self.E = theano.shared(value=W_values.astype(config.floatX), name=tag)
         # Define a normalization function with respect to the L_2 norm of the
         # embedding vectors.
         self.updates = OrderedDict({self.E: self.E / T.sqrt(T.sum(self.E ** 2, axis=1)).reshape((N, 1))})
-        self.normalize = theano.function([], [], updates=self.updates)
+        self.normalize = theano.function([], [], updates=self.updates, name=tag+'-normalize')
 # ----------------------------------------------------------------------------
 
 
@@ -151,6 +159,7 @@ class Model(object):
 class Model3(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
+        self.name = DISTMULT
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -195,7 +204,7 @@ class Model3(Model):
 
     def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
         params = [self.embeddings[0].E, self.embeddings[1].E]
-        return train_fn([self.cost], params, num_neg, lrate, marge)
+        return train_fn([self.cost], params, num_neg, lrate, marge, name=self.name+'-train_fn')
 
     def all_ent_scores(self, in_triples):
         e_ss = in_triples[:, 0]
@@ -206,7 +215,7 @@ class Model3(Model):
 
     def scores_fn(self):
         in_triples = T.imatrix()
-        return theano.function([in_triples], [self.all_ent_scores(in_triples)])
+        return theano.function([in_triples], [self.all_ent_scores(in_triples)], name=self.name+'-scores_fn')
 
     def ranks_fn(self):
         in_triples = T.imatrix()
@@ -220,12 +229,13 @@ class Model3(Model):
         e_os_scores = scores[T.arange(scores.shape[0]), e_os]
         ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
-        return theano.function([in_triples], [ranks_os])
+        return theano.function([in_triples], [ranks_os], name=self.name+'-ranks_fn')
 
 
 class Model2(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
+        self.name = MODEL_E
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -272,7 +282,7 @@ class Model2(Model):
 
     def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
         params = [self.embeddings[0].E, self.embeddings[1].E, self.embeddings[2].E]
-        return train_fn([self.cost], params, num_neg, lrate, marge)
+        return train_fn([self.cost], params, num_neg, lrate, marge, name=self.name+'-train_fn')
 
     def all_ent_scores(self, in_triples):
         rs = in_triples[:, 1]
@@ -282,7 +292,7 @@ class Model2(Model):
 
     def scores_fn(self):
         in_triples = T.imatrix()
-        return theano.function([in_triples], [self.all_ent_scores(in_triples)])
+        return theano.function([in_triples], [self.all_ent_scores(in_triples)], name=self.name+'-scores_fn')
 
     def ranks_fn(self):
         in_triples = T.imatrix()
@@ -296,12 +306,13 @@ class Model2(Model):
         e_os_scores = scores[T.arange(scores.shape[0]), e_os]
         ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
-        return theano.function([in_triples], [ranks_os])
+        return theano.function([in_triples], [ranks_os], name=self.name+'-ranks_fn')
 
 
 class Model2plus3(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
+        self.name = DISTMULT_AND_E
         self.rng = np.random
         self.srng = MRG_RandomStreams
 
@@ -324,7 +335,7 @@ class Model2plus3(Model):
     def scores_fn(self):
         in_triples = T.imatrix()
         scores = self.model2.all_ent_scores(in_triples) + self.model3.all_ent_scores(in_triples)
-        return theano.function([in_triples], [scores])
+        return theano.function([in_triples], [scores], name=self.name+'-scores_fn')
 
     def ranks_fn(self):
         in_triples = T.imatrix()
@@ -338,11 +349,11 @@ class Model2plus3(Model):
         e_os_scores = scores[T.arange(scores.shape[0]), e_os]
         ranks_os = ( scores >= e_os_scores.reshape((-1, 1)) ).sum(axis=1)
 
-        return theano.function([in_triples], [ranks_os])
+        return theano.function([in_triples], [ranks_os], name=self.name+'-ranks_fn')
 
     def train_fn(self, num_neg=10, lrate=0.01, marge=1.0):
         params = [embedding.E for embedding in self.embeddings]
-        return train_fn([self.model2.cost, self.model3.cost], params, num_neg, lrate, marge)
+        return train_fn([self.model2.cost, self.model3.cost], params, num_neg, lrate, marge, name=self.name+'-train_fn')
 
 
 if __name__ == "__main__":

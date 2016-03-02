@@ -1,4 +1,5 @@
 import time
+import math
 from collections import defaultdict
 
 import numpy as np
@@ -129,7 +130,9 @@ def train(model, train_triples, valid_triples, test_triples, sr_index, params):
     history_test_hits = []
     history_epoch_times = []
     bins = [1, 11, 21, 31, 51, 101, 1001, 10001, 20000]
-    print("Training on %d triples" % len(train_triples))
+    print("Training on {:d} triples".format(len(train_triples)))
+    num_batches = int(math.ceil(len(train_triples) / params[BATCH_SIZE]))
+    print("Batch size = {:d}, Number of batches = {:d}".format(params[BATCH_SIZE], num_batches))
     print("The eval is being printed with number of items the bins -> %s" % bins)
     try:
         # We iterate over epochs:
@@ -199,4 +202,4 @@ def train(model, train_triples, valid_triples, test_triples, sr_index, params):
     except KeyboardInterrupt:
         print("training interrupted")
 
-    return get_best_metric(history_valid_hits)
+    return model, get_best_metric(history_valid_hits), train_fn, scores_fn

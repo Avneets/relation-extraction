@@ -2,7 +2,6 @@ import sys
 
 import numpy as np
 
-from kbc.reader import KBReader
 from kbc.utils import config, utils, kb_utils
 from kbc.models import models
 from kbc.utils.params import *
@@ -38,13 +37,28 @@ def launch(params):
 
 
 if __name__ == '__main__':
-    local_params = {MODEL_NAME: MODEL_E,
-                    MODEL_FILE: 'model2test', SAVETO_FILE: 'model2test', RELOAD_MODEL: True,
-                    DISP_FREQ: 2, VALID_FREQ: 10, SAVE_FREQ: 10,
-                    NUM_EPOCHS: 50,
-                    TRAIN_FRAC: 1.0/270, VALID_FRAC: 0.1, TEST_FRAC: 0.1,
-                    L1_REG: 0., L2_REG: 0., IS_NORMALIZED: True,
-                    BATCH_SIZE: 128, LEARNING_RATE: 0.01, NUM_NEG: 10
-                    }
-    p = Params(local_params)
-    ranks = launch(params=p)
+    local_model_path = os.path.join(config.saveModelsRoot, 'model2test_local2')
+    local_params = \
+        {
+            MODEL_NAME: MODEL_E,
+            MODEL_FILE: local_model_path, SAVETO_FILE: local_model_path, RELOAD_MODEL: True,
+            DISP_FREQ: 2, VALID_FREQ: 10, SAVE_FREQ: 10,
+            NUM_EPOCHS: 50,
+            TRAIN_FRAC: 1.0/270, VALID_FRAC: 0.1, TEST_FRAC: 0.1,
+            L1_REG: 0., L2_REG: 0., IS_NORMALIZED: True,
+            BATCH_SIZE: 128, LEARNING_RATE: 0.01, NUM_NEG: 10
+        }
+    server_model_path = os.path.join(config.saveModelsRoot, 'model2+3_server')
+    server_params = \
+        {
+            MODEL_NAME: DISTMULT_AND_E,
+            MODEL_FILE: server_model_path, SAVETO_FILE: server_model_path, RELOAD_MODEL: True,
+            DISP_FREQ: 100, VALID_FREQ: 265*20, SAVE_FREQ: 265*50,
+            NUM_EPOCHS: 40,
+            TRAIN_FRAC: 0.50, VALID_FRAC: 0.4, TEST_FRAC: 0.4,
+            L1_REG: 0., L2_REG: 0., IS_NORMALIZED: True,
+            BATCH_SIZE: 512, LEARNING_RATE: 0.01, NUM_NEG: 10
+        }
+
+    p = Params(server_params)
+    model, performance, train_fn, scores_fn = launch(params=p)

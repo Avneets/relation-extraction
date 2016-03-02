@@ -1,3 +1,4 @@
+import sys
 from collections import OrderedDict
 import six.moves.cPickle as pickle
 
@@ -43,8 +44,15 @@ def save(saveto, all_params):
 
 
 def load_params(savedfile):
-    model_all_params = pickle.load(open('%s.pkl' % savedfile, 'rb'))
-    return model_all_params
+    try:
+        model_all_params = pickle.load(open('%s.pkl' % savedfile, 'rb'))
+        return model_all_params
+    except:
+        print("Couldn't load params. Fresh initialization? [y/n]")
+        inp = raw_input()
+        if inp[0] == 'y': return None
+        else: sys.exit(1)
+        return None
 
 
 def kb_train(params):

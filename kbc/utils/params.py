@@ -73,7 +73,7 @@ class Params(dict):
         if isinstance(init, dict):
             dict.__init__(self, init)
         else:
-            print 'Warning: Unknown initialisation for Options'
+            print 'Warning: Unknown initialisation argument for Params. Ignoring initialization'
         for kk, vv in default_params.items():
             if kk not in self.keys():
                 self[kk] = vv

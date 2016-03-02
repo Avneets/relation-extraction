@@ -21,7 +21,7 @@ if not hasattr(theano.config, "floatX"):
     logging.info("floatX not found in config. Default to float32")
     theano.config.floatX = np.float32
 floatX = theano.config.floatX
-intX = np.int32
+intX = 'int64'
 
 # Training and Optimization params
 ENTITY_EMBEDDINGS = "ent_emb"
