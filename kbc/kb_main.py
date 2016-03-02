@@ -23,11 +23,11 @@ def launch(params):
         all_params_init = utils.load_params(params[MODEL_FILE])
 
     if params[MODEL_NAME] == MODEL_E:
-        Model = models.Model2
+        Model = models.ModelE
     elif params[MODEL_NAME] == DISTMULT:
-        Model = models.Model3
+        Model = models.DistMult
     elif params[MODEL_NAME] == DISTMULT_AND_E:
-        Model = models.Model2plus3
+        Model = models.DistMultplusE
     else:
         print("Model %s doesn't exist. Fatal error!")
         sys.exit(1)

@@ -156,7 +156,7 @@ class Model(object):
     __metaclass__ = ABCMeta
 
 
-class Model3(Model):
+class DistMult(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.name = DISTMULT
@@ -232,7 +232,7 @@ class Model3(Model):
         return theano.function([in_triples], [ranks_os], name=self.name+'-ranks_fn')
 
 
-class Model2(Model):
+class ModelE(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.name = MODEL_E
@@ -309,7 +309,7 @@ class Model2(Model):
         return theano.function([in_triples], [ranks_os], name=self.name+'-ranks_fn')
 
 
-class Model2plus3(Model):
+class DistMultplusE(Model):
 
     def __init__(self, n_entities, n_relations, n_dim=10, params=None, is_normalized=True, L1_reg=0.0, L2_reg=0.0):
         self.name = DISTMULT_AND_E
@@ -322,8 +322,8 @@ class Model2plus3(Model):
         self.L1_reg = L1_reg
         self.L2_reg = L2_reg
 
-        self.model2 = Model2(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
-        self.model3 = Model3(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
+        self.model2 = ModelE(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
+        self.model3 = DistMult(n_entities, n_relations, n_dim, params, is_normalized, L1_reg, L2_reg)
 
         self.embeddings = self.model2.embeddings + self.model3.embeddings
         self.all_params_dict = get_embeddings_dict(self)
@@ -358,4 +358,4 @@ class Model2plus3(Model):
 
 if __name__ == "__main__":
     # @TODO: write some unit tests
-    model3 = Model3(14000, 300, 40)
+    model3 = DistMult(14000, 300, 40)
