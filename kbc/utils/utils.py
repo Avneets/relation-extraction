@@ -55,5 +55,3 @@ def load_params(savedfile):
         return None
 
 
-def kb_train(params):
-    pass
